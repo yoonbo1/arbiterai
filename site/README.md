@@ -62,10 +62,21 @@ Two things to know if you ever redo this:
   add the `www` CNAME. Squarespace then manages its own apex A records under a "Squarespace
   Domain Forwarding" preset. The Email Security preset (SPF, DMARC, DKIM) is untouched.
 
-Squarespace's DNS does offer an `ALIAS` record type, so pointing the bare apex straight at
-Heroku is possible as an alternative to forwarding. That would make `arbiterai.tech` the
-canonical host; it would need `SITE_URL` changed, `heroku domains:add arbiterai.tech`, and
-the forwarding rule removed.
+Two things about the apex that cost time, so they are written down:
+
+- **Squarespace forwarding takes 24 to 48 hours to activate**, and its own dialog says so
+  only after you save. Deeper paths start forwarding well before the root does, and until
+  the root activates Squarespace's CDN keeps serving the "Coming Soon" parking page there.
+  So `arbiterai.tech/product.html` redirecting while `arbiterai.tech/` does not is expected
+  during that window, not a misconfiguration.
+- **An ALIAS record at the apex is not available on this zone.** Squarespace offers the
+  record type, but rejects it with "ALIAS records are not allowed on a zone using DNSSEC",
+  and DNSSEC is enabled for arbiterai.tech. Pointing the bare apex straight at Heroku
+  therefore needs either DNSSEC switched off, which is a deliberate security decision, or
+  DNS moved to a provider that does both, such as Cloudflare with CNAME flattening.
+
+`wsgi.py` redirects any non-canonical host to `SITE_URL`, so if the apex is ever pointed at
+Heroku the redirect is already in place and only `heroku domains:add arbiterai.tech` is needed.
 
 Heroku's Automated Certificate Management issued the Let's Encrypt certificate for
 `www.arbiterai.tech` a few minutes after the CNAME went live. Check with

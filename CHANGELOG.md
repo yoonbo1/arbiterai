@@ -345,3 +345,24 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   completed" note, and the Netlify how-to under the form are gone. All were notes to
   ourselves that shipped to visitors.
 - **`styles.css`**: a `.form-error` panel matching the existing `.form-ok` panel.
+
+## 2026-09-03 — apex domain investigation
+
+- **Diagnosed why `arbiterai.tech` still showed Squarespace's parking page.** Deeper paths
+  such as `/product.html` redirected to www correctly, but the root returned 200 from
+  Squarespace with a cache `age` of nearly nine hours. Squarespace's forwarding activates
+  over **24 to 48 hours**, a fact its UI only states after you save a rule, and its CDN
+  serves the parking page at the root until then.
+- **Attempted to bypass forwarding entirely** by pointing the apex at Heroku with an ALIAS
+  record, which would have made the root work immediately. Blocked: Squarespace rejects
+  ALIAS on a DNSSEC-signed zone, and DNSSEC is enabled for this domain. Turning DNSSEC off
+  is a security decision for the owner, so the attempt was reverted rather than forced.
+- **The forwarding rule was deleted and recreated** in the course of that attempt, which
+  restarted the 24 to 48 hour activation window. Apex A records, the www CNAME, and the
+  SPF/DMARC/DKIM records were all verified restored afterwards, and www never stopped
+  serving.
+- **`wsgi.py` gained a canonical host redirect** (any non-canonical host to `SITE_URL`,
+  path and query preserved). It is inert while the apex routes through Squarespace, and
+  means only `heroku domains:add` is needed if the apex is ever pointed at Heroku.
+- `arbiterai.tech` was removed from the Heroku app again, so certificate management no
+  longer reports a permanent validation failure for a domain that does not point there.

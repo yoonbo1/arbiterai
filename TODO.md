@@ -57,6 +57,8 @@ with a compliance officer.
 
 ## Site (it is live now, so these are live defects)
 
+- [ ] **The apex `arbiterai.tech` does not serve the site yet.** Squarespace forwarding takes 24 to 48 hours to activate and the clock restarted on 2026-09-03 when the rule was recreated. Deeper paths forward already; the root still shows Squarespace's cached parking page. Decide which ending you want: wait it out, move DNS to Cloudflare (supports DNSSEC and apex CNAME flattening, so the apex could serve Heroku directly with no forwarding), or turn off DNSSEC at Squarespace and use an ALIAS record. The third is a security downgrade and is your call, not one to make casually for a company selling security.
+
 - [ ] Do not publish SOC 2 or HITRUST claims until the report is issued (currently listed as "In progress" / "Planned", which is accurate).
 - [ ] Confirm claims on the Security and Pricing pages that are not yet backed: "Independent penetration test summary: Available", "flow-down BAAs with all subprocessors", "99.9% uptime SLA".
 - [ ] **Set `FORM_ENDPOINT` on the Heroku app.** The form now works end to end, but with no endpoint configured the submission is only written to the application log, which is not durable and is a poor place for personal data. Pick a backend (Formspree, Basin, or a Slack/Zapier webhook) and run `heroku config:set FORM_ENDPOINT=... -a arbiterai-site`. No code or CSP change is needed: `wsgi.py` forwards server side.
