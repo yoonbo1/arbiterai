@@ -1,0 +1,126 @@
+# Local HIPAA-oriented AI stack for medical documentation.
+# Same topology as production; only replica counts change later.
+# NOTE: this compose file is for a private dev machine. For anything holding
+# real PHI, disk encryption, TLS between services, and no outbound internet
+# on the model host are required (see docs/HIPAA_CONTROLS.md).
+#
+# `docker compose up -d --build` (no profile) starts: postgres, redis, embeddings, gateway, worker.
+# The language model is reached over HTTP (SMALL_MODEL_URL / LARGE_MODEL_URL / VLM_URL in .env):
+#   * NVIDIA GPU box:  --profile gpu           adds vllm-small
+#                      --profile gpu --profile vlm  also adds vllm-vlm
+#   * Apple Silicon / no GPU: run Ollama on the host and point the URLs at
+#     http://host.docker.internal:11434/v1 (see .env.example and README).
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${PG_USER:-hipaa}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?set PG_PASSWORD in .env}
+      POSTGRES_DB: ${PG_DB:-hipaa}
+      PG_APP_PASSWORD: ${PG_APP_PASSWORD:?set PG_APP_PASSWORD in .env}   # read by db/02_app_role.sh
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./db/02_app_role.sh:/docker-entrypoint-initdb.d/02_app_role.sh:ro
+    # Localhost only. PG_HOST_PORT lets a dev box that already runs its own Postgres on 5432
+    # (e.g. Homebrew) publish this one elsewhere; the host-side DATABASE_URL for eval/ uses it.
+    ports: ["127.0.0.1:${PG_HOST_PORT:-5432}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-hipaa} -d ${PG_DB:-hipaa}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---- Model pools: NVIDIA only (vllm/vllm-openai is CUDA + linux/amd64). Off by default. ----
+  # Small model pool: classification, de-id assist, simple generation.
+  vllm-small:
+    image: vllm/vllm-openai:latest
+    command: >
+      --model ${SMALL_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}
+      --quantization awq --max-model-len 8192
+      --gpu-memory-utilization 0.45 --port 8000
+    environment: { HF_HUB_OFFLINE: "1", VLLM_NO_USAGE_STATS: "1", DO_NOT_TRACK: "1" }
+    volumes: [hfcache:/root/.cache/huggingface]
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }] } } }
+    profiles: ["gpu"]
+
+  # Large / vision pool: VLM for scanned pages + hard reasoning. Needs a second GPU.
+  vllm-vlm:
+    image: vllm/vllm-openai:latest
+    command: >
+      --model ${VLM_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
+      --max-model-len 8192 --gpu-memory-utilization 0.45 --port 8000
+    environment: { HF_HUB_OFFLINE: "1", VLLM_NO_USAGE_STATS: "1", DO_NOT_TRACK: "1" }
+    volumes: [hfcache:/root/.cache/huggingface]
+    deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }] } } }
+    profiles: ["gpu", "vlm"]
+
+  # ---- Embeddings (384-dim BAAI/bge-small-en-v1.5; chunks.embedding is vector(384)) ----
+  # Local arm64-native service (fastembed / ONNX Runtime). On linux/amd64 you can use the
+  # upstream image instead; it exposes the same POST /embed and GET /health:
+  #   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+  #   command: ["--model-id", "BAAI/bge-small-en-v1.5", "--port", "80"]
+  #   volumes: [hfcache:/data]
+  # (those images have no arm64 variant and fail under Rosetta emulation; checked 2026-09-03).
+  embeddings:
+    build: ./embeddings
+    environment:
+      EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-small-en-v1.5}
+      FASTEMBED_CACHE_PATH: /data/fastembed
+    volumes: [hfcache:/data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:80/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60          # first start downloads the model
+      start_period: 30s
+
+  gateway:
+    build: ./gateway
+    env_file: .env
+    ports: ["127.0.0.1:8080:8080"]
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./worker
+      args:
+        SPACY_MODEL: ${SPACY_MODEL:-en_core_web_lg}   # en_core_web_sm for a faster dev build
+    env_file: .env
+    restart: unless-stopped
+    stop_grace_period: 60s        # finish the current job on SIGTERM
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      embeddings: { condition: service_healthy }
+    extra_hosts: ["host.docker.internal:host-gateway"]   # reach Ollama on the macOS host
+    volumes:
+      - ./data:/data        # encrypted volume in prod; local dir for synthetic docs
+    deploy: { replicas: 1 }   # scale: docker compose up --scale worker=4
+
+volumes:
+  pgdata:
+  redisdata:
+  hfcache:

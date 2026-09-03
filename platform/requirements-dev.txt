@@ -1,0 +1,5 @@
+# Host-side test dependencies, installed into ./.venv by `make venv` (see the root Makefile).
+# Runtime deps for the modules under test come from scripts/requirements.txt plus the pins
+# already in the venv (presidio-analyzer, spacy + en_core_web_sm, rank-bm25, psycopg, redis).
+pytest==9.1.1
+pytest-asyncio==1.4.0

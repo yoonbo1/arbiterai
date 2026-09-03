@@ -1,0 +1,5 @@
+faker
+reportlab
+pymupdf
+pillow
+httpx

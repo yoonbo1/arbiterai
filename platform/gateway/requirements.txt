@@ -1,0 +1,6 @@
+# Exact pins verified to resolve and import on python:3.12-slim linux/arm64 (2026-09-03).
+fastapi==0.115.14
+uvicorn[standard]==0.30.6
+asyncpg==0.29.0
+redis==5.3.1
+pydantic==2.13.5

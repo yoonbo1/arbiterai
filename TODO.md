@@ -1,0 +1,68 @@
+# TODO before real PHI
+
+Derived from `platform/docs/HIPAA_CONTROLS.md` plus what the first end-to-end run of the
+code exposed. Nothing on this list is optional for production PHI. Not legal advice; review
+with a compliance officer.
+
+## Gates (from HIPAA_CONTROLS.md "Non-negotiables")
+
+- [ ] Model host has no outbound internet: pull weights once, then air-gap or allowlist.
+- [ ] Every third party touching the machine or data has a BAA (cloud, GPU host, monitoring, support).
+- [ ] Eval gates pass on synthetic data: de-id recall >= 0.99, zero cross-patient leaks.
+- [ ] Admin endpoints (`/admin/*`) sit behind VPN + MFA, never on the public internet.
+- [ ] Rotate `API_KEY_PEPPER`, DB passwords, and `TENANT_KEK` out of `.env` into a secrets manager.
+
+## Safeguards the code does not provide (HIPAA_CONTROLS.md "You add" column)
+
+- [ ] **Unique user identification**: MFA + SSO for an admin console; a named human behind every API key.
+- [ ] **Access control**: role review process; issue the `cohort` scope only to population-health roles.
+- [ ] **Audit controls**: ship `audit_log` to WORM storage; 6-year retention; scheduled log review.
+- [ ] **Integrity**: backups with tested restore; checksum verification of stored documents.
+- [ ] **Transmission security**: TLS everywhere including between services (mTLS in-cluster); VPN or private link for tenants. Today ports are only bound to localhost.
+- [ ] **Encryption at rest**: full-disk / volume encryption; per-tenant DEKs from KMS or Vault (today `_tenant_key()` derives from an env var); encrypted object storage for source documents.
+- [ ] **De-identification**: measure recall on n2c2 / i2b2; tune thresholds; human review sample.
+- [ ] **BAAs**: signed with every tenant and every vendor.
+- [ ] **Risk analysis and policies**: written risk analysis for this system, incident response plan, workforce training, sanctions policy.
+- [ ] **Contingency**: multi-AZ, DR runbook, tested failover.
+- [ ] **Telemetry**: self-host Langfuse/LangSmith or send only de-identified spans. Cloud tracing stays off.
+
+## Code-level gaps found during bring-up
+
+- [ ] `jobs.request` stores the raw request (question text, patient external id) before de-identification, contrary to the schema comment. De-identify or encrypt before persisting.
+- [ ] The LangGraph Postgres checkpointer (`CHECKPOINTER=postgres`) would persist pre-de-identification text and the plaintext PHI map outside RLS. It is off by default; do not enable it with real data until checkpoint state is encrypted and tenant-scoped.
+- [ ] `storage_uri` is client-supplied and opened by the worker. It is now restricted to `DATA_ROOT`; production needs per-tenant object storage prefixes and signed access.
+- [ ] Patient `external_id` (typically an MRN) is stored in plaintext in `patients`; the schema comment says "stored encrypted at rest". Encrypt or hash it.
+- [ ] The synthetic-data eval only exercises one document type (discharge summary). Add scans of real formats (faxes, forms, handwriting) once de-identified samples exist.
+- [ ] The small model runs on the developer's machine via Ollama bound to `0.0.0.0` for container access. Production model hosts need a private network and no LAN exposure.
+- [ ] De-identification recall gaps seen on synthetic data: Presidio has no US street-address recognizer (street number and street name fragments survive), city names are sometimes tagged as PERSON, the `00` prefix of `001-555-...` fax numbers survives. Add an address recognizer and tune thresholds with `en_core_web_lg` on n2c2 / i2b2 before the 0.99 gate can be trusted.
+- [ ] `documents.content_hash` is `md5(storage_uri)`, not a hash of the bytes. Hash the content so dedupe and integrity checks mean something.
+- [ ] A failed ingest leaves a `documents` row containing the client-supplied `storage_uri` (seen with the path-traversal probe). Scrub or drop it.
+- [ ] `env_file: .env` hands every secret to both containers (the worker receives `ADMIN_TOKEN`). Split secrets per service.
+- [ ] Application errors are not retried; only crash-mid-job redelivery is. Classify transient errors (model or embeddings unreachable) for retry with backoff.
+- [ ] The gateway's asyncpg pool does not validate connections after a Postgres restart (masked today because compose restarts the gateway). Add a connection check or `max_inactive_connection_lifetime`.
+- [ ] `choose_route` runs Tesseract twice per scanned page; cache the OCR output.
+- [ ] `api_keys.key_prefix` is the first 12 characters, which is `hipaa_live_` plus one random character. Widen it if audit-log matching by prefix matters.
+- [ ] The `vlm` route, `CHECKPOINTER=postgres`, and the `gpu` compose profile are untested on this machine (no NVIDIA GPU). Verify on a GPU box.
+
+## Found by the eval harness (synthetic data, 20 documents)
+
+- [ ] `audit_log` is not under RLS: `app_rw` can read every tenant's rows. Add a policy or a tenant-scoped view.
+- [ ] `job.query.completed` is written for validation-failed queries too, so the audit trail cannot distinguish a rejected answer from a delivered one. Record the outcome in `action` or `detail`.
+- [ ] Escalation re-runs the same model at temperature 0 when `LARGE_MODEL` equals `SMALL_MODEL`, which cannot change the verdict and costs 8x. Either configure a genuinely larger model for the large tier or skip escalation when the tiers are identical.
+- [ ] The grounding judge is a 7B model asked for a single number; it is sensitive to formatting. Consider claim-level checking or a calibrated threshold, and measure judge agreement on a labelled set.
+- [ ] Tesseract misreads on scanned pages propagate into answers (`fisinopril` for `lisinopril`, `HbAtc` for `HbA1c`). Route low-confidence pages to the VLM on a GPU box, or add a drug-name dictionary correction step.
+- [ ] Ages over 89 and other Safe Harbor identifiers not present in the synthetic corpus (device serials, biometric identifiers, full-face photos, vehicle identifiers, account numbers) are not exercised. Extend the synthetic generator before trusting recall.
+- [ ] The eval only ingests one document type and asks two gold questions per patient. Add negative questions (answer not in record), multi-document patients, and cross-patient probes that name another patient.
+
+## Site (before launch)
+
+- [ ] Do not publish SOC 2 or HITRUST claims until the report is issued (currently listed as "In progress" / "Planned", which is accurate).
+- [ ] Confirm claims on the Security and Pricing pages that are not yet backed: "Independent penetration test summary: Available", "flow-down BAAs with all subprocessors", "99.9% uptime SLA".
+- [ ] Contact form success state: the Netlify action returns to `/contact.html?sent=1` but `main.js` only shows `.form-ok` on the `data-ajax` path. Show it when `sent=1` is in the query string.
+- [ ] Remove placeholder copy that is currently public: "Last updated: replace with date" (privacy, terms), "Replace with your jurisdiction" (terms), "Founder and team bios go here" (about), "Update this list as attestations are completed" (security), "Hosted on Netlify? ..." (contact).
+- [ ] Product page ledger (`ledger(animate=False)`) renders every row at 45% opacity with empty check marks; mark rows `done` when not animating.
+- [ ] Contrast below WCAG AA: white on brass buttons (3.2:1), kicker `#8F6E2B` on frost (4.3:1), the two badge styles (about 4.1:1).
+- [ ] Vercel `cleanUrls: true` redirects every `.html` link, canonical, and sitemap URL; drop it or emit extensionless URLs. `_headers` is Netlify/Cloudflare-only; Vercel needs a `headers` block in `vercel.json`.
+- [ ] Sticky header: add `html{scroll-padding-top:80px}` so anchors like `#baa` clear it by design rather than by section padding.
+- [ ] Mark required form fields visibly; enlarge the consent checkbox.
+- [ ] Align the docs page's credential prefix (`arb_live_`) and API host (`api.arbiterai.tech`) with the platform (`hipaa_live_`, no public host yet).
