@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Heroku Python buildpack hook: runs after dependencies are installed, inside the build dir.
+# public/ is generated, not committed, so the slug has to build it.
+set -euo pipefail
+echo "-----> Generating static site with build.py"
+python build.py
+echo "-----> $(find public -type f | wc -l | tr -d ' ') files in public/"

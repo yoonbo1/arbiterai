@@ -1,5 +1,6 @@
 # Arbiter AI monorepo task runner.
 #   make site   build the marketing site into site/public/
+#   make serve-site  serve it locally with gunicorn (same stack as Heroku)
 #   make up     start postgres, redis, embeddings, gateway, worker (no GPU services)
 #   make down   stop the stack (keeps volumes; `make down-v` wipes them)
 #   make synth  generate synthetic documents with injected fake PHI (N=20 by default)
@@ -20,7 +21,7 @@ PYTHON312 ?= python3.12
 N         ?= 20
 COMPOSE   := docker compose --project-directory $(PLATFORM)
 
-.PHONY: help site serve-site venv up down down-v ps logs synth bootstrap eval test llm clean
+.PHONY: help site serve-site deploy-site venv up down down-v ps logs synth bootstrap eval test llm clean
 
 help:
 	@grep -E '^#   make' $(MAKEFILE_LIST) | sed 's/^#   //'
@@ -29,8 +30,14 @@ help:
 site:
 	cd $(SITE) && python3 build.py
 
-serve-site: site
-	cd $(SITE)/public && python3 -m http.server 8765
+# Serve the built site with the same stack Heroku runs (gunicorn + WhiteNoise), so the
+# security headers and the 404 fallback behave locally exactly as they do in production.
+serve-site: site venv
+	cd $(SITE) && $(VENV)/bin/gunicorn wsgi:app --bind 127.0.0.1:8765 --workers 2 --threads 4
+
+# Deploy site/ to Heroku. The app must already exist and have a git remote (see README).
+deploy-site: site
+	git subtree push --prefix site heroku main
 
 # ---------------------------------------------------------------- python env
 venv: $(VENV)/bin/python

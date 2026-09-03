@@ -4,7 +4,9 @@ Run: python3 build.py   — then deploy the public/ folder anywhere static."""
 import os, shutil, datetime
 from pathlib import Path
 
-SITE = "https://arbiterai.tech"
+# Canonical origin for canonical/og:url/sitemap. Override on a preview deploy so the
+# generated URLs point at the host actually serving the page.
+SITE = os.environ.get("SITE_URL", "https://arbiterai.tech").rstrip("/")
 OUT = Path("public")
 NAV = [("Product", "product.html"), ("Security", "security.html"), ("Pricing", "pricing.html"),
        ("Docs", "docs.html"), ("About", "about.html")]

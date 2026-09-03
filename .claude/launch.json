@@ -1,6 +1,11 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "site", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8765", "--directory", "site/public"], "port": 8765 }
+    {
+      "name": "site",
+      "runtimeExecutable": ".venv/bin/gunicorn",
+      "runtimeArgs": ["--chdir", "site", "wsgi:app", "--bind", "127.0.0.1:8765", "--workers", "2", "--threads", "4"],
+      "port": 8765
+    }
   ]
 }
