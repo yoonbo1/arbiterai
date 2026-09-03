@@ -42,23 +42,34 @@ heroku logs --tail -a arbiterai-site
 `SITE_URL` is a config var and sets the canonical origin baked into `<link rel=canonical>`,
 `og:url` and `sitemap.xml`. It is `https://www.arbiterai.tech`.
 
-### DNS at Squarespace
+### DNS at Squarespace (live)
 
-Heroku publishes no static IPs, so an apex domain cannot point at it with A records, and
-Squarespace DNS has no ALIAS/ANAME record type. The site therefore lives on `www` and the
-apex forwards to it.
+Heroku publishes no static IPs, so the apex cannot point at it with A records. The site
+lives on `www` and the apex forwards to it. Both are configured and verified.
 
 | Where | Type | Host | Value |
 |---|---|---|---|
-| Squarespace DNS | CNAME | `www` | `protected-sinraptor-hr8yljyysuen6z4bu4ylvvf1.herokudns.com` |
-| Squarespace domain forwarding | — | `arbiterai.tech` | `https://www.arbiterai.tech` (301, forward path) |
+| Custom records | CNAME | `www` | `protected-sinraptor-hr8yljyysuen6z4bu4ylvvf1.herokudns.com` (TTL 30 min) |
+| Website → Domain Forwarding | 301 | `@` | `https://www.arbiterai.tech`, path forwarded |
 
-Remove the existing `www` CNAME to `ext-sq.squarespace.com` first; it points at the
-Squarespace "Coming Soon" page. Leave the SPF TXT record (`v=spf1 -all`) alone.
+Two things to know if you ever redo this:
 
-Heroku's Automated Certificate Management is enabled and issues the TLS certificate once
-`www` resolves to the DNS target above. Check with `heroku certs:auto -a arbiterai-site`.
-There are no CAA records on the domain, so Let's Encrypt is not blocked.
+- In the forwarding dialog the subdomain box already appends `.arbiterai.tech`, so the root
+  domain is entered as `@`. Typing the full domain creates a rule for
+  `arbiterai.tech.arbiterai.tech`, which does nothing.
+- Saving a forwarding rule deletes the "Squarespace Defaults" preset, which is what removes
+  the conflicting `www` CNAME to `ext-sq.squarespace.com`. Do the forwarding rule first, then
+  add the `www` CNAME. Squarespace then manages its own apex A records under a "Squarespace
+  Domain Forwarding" preset. The Email Security preset (SPF, DMARC, DKIM) is untouched.
+
+Squarespace's DNS does offer an `ALIAS` record type, so pointing the bare apex straight at
+Heroku is possible as an alternative to forwarding. That would make `arbiterai.tech` the
+canonical host; it would need `SITE_URL` changed, `heroku domains:add arbiterai.tech`, and
+the forwarding rule removed.
+
+Heroku's Automated Certificate Management issued the Let's Encrypt certificate for
+`www.arbiterai.tech` a few minutes after the CNAME went live. Check with
+`heroku certs:auto -a arbiterai-site`. There are no CAA records blocking issuance.
 
 ## Launch checklist
 

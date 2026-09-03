@@ -303,3 +303,21 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   account holds an Eco subscription, which is a purchase to make in the dashboard.
 - **Not done: DNS at Squarespace.** The Chrome profile is signed out of Squarespace, and I
   do not enter credentials. The records are in `site/README.md`.
+
+## 2026-09-03 — arbiterai.tech live on Heroku
+
+- **Squarespace DNS configured.** A `www` CNAME to the Heroku DNS target, and a domain
+  forwarding rule sending the apex to `https://www.arbiterai.tech` as a permanent redirect
+  with the path preserved.
+- **Fixed a pre-existing broken forwarding rule.** It forwarded
+  `arbiterai.tech.arbiterai.tech`, because the subdomain field appends the domain and the
+  full domain had been typed into it. The root domain is entered as `@`. The rule was also
+  a temporary redirect with paths dropped; it is now permanent with paths forwarded.
+- **Correction to an earlier note.** Squarespace DNS does support `ALIAS`, so the apex could
+  point at Heroku directly instead of forwarding. Documented in `site/README.md` as the
+  alternative if the bare domain should become canonical.
+- **TLS issued.** Let's Encrypt certificate for `www.arbiterai.tech` via Heroku ACM.
+- **Verified live**: all ten pages, the stylesheet, script, OG image, sitemap and robots
+  return 200; an unknown path returns the 404 page; all six security headers are present;
+  the canonical URL is `https://www.arbiterai.tech/`; and `arbiterai.tech/docs.html`
+  301-redirects to `www.arbiterai.tech/docs.html`.
