@@ -34,6 +34,7 @@ with a compliance officer.
 - [ ] Patient `external_id` (typically an MRN) is stored in plaintext in `patients`; the schema comment says "stored encrypted at rest". Encrypt or hash it.
 - [ ] The synthetic-data eval only exercises one document type (discharge summary). Add scans of real formats (faxes, forms, handwriting) once de-identified samples exist.
 - [ ] The small model runs on the developer's machine via Ollama bound to `0.0.0.0` for container access. Production model hosts need a private network and no LAN exposure.
+- [ ] Ollama is a bare background process, not a service, so nothing restarts it and it dies on reboot. It also crashed once with a bus error while idle after roughly 4,500 requests. If that recurs, capture the log and pin a different runner; for anything beyond local dev, run the model host as a managed service.
 - [ ] De-identification recall gaps seen on synthetic data: Presidio has no US street-address recognizer (street number and street name fragments survive), city names are sometimes tagged as PERSON, the `00` prefix of `001-555-...` fax numbers survives. Add an address recognizer and tune thresholds with `en_core_web_lg` on n2c2 / i2b2 before the 0.99 gate can be trusted.
 - [ ] `documents.content_hash` is `md5(storage_uri)`, not a hash of the bytes. Hash the content so dedupe and integrity checks mean something.
 - [ ] A failed ingest leaves a `documents` row containing the client-supplied `storage_uri` (seen with the path-traversal probe). Scrub or drop it.

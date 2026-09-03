@@ -23,7 +23,8 @@ cp .env.example .env            # replace every change-me (openssl rand -hex 24)
 
 # Apple Silicon / no NVIDIA GPU: Ollama on the host, Metal-accelerated.
 brew install ollama
-OLLAMA_HOST=0.0.0.0:11434 ollama serve &     # 0.0.0.0 so containers reach it via host.docker.internal (dev only: LAN-exposed)
+OLLAMA_HOST=0.0.0.0:11434 nohup ollama serve > /tmp/ollama.log 2>&1 &   # nohup: outlives the shell. 0.0.0.0 so containers reach it
+                                             # via host.docker.internal (dev only: LAN-exposed)
 ollama pull qwen2.5:7b-instruct              # SMALL_MODEL/LARGE_MODEL in .env; VLM_URL stays empty (scans fall back to OCR)
 
 docker compose up -d --build                 # first build downloads en_core_web_lg (~560 MB)
