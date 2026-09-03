@@ -24,9 +24,41 @@ _headers           security headers (Netlify/Cloudflare Pages format)
    **Cloudflare Pages / GitHub Pages**: run `python3 build.py` in CI and publish `public/`.
 3. Add the custom domain `arbiterai.tech` (and `www`) in the host dashboard. At your registrar
    set the A/ALIAS record for the apex and a CNAME for `www` as the host instructs. HTTPS is automatic.
-4. Add an `og-image.png` (1200×630) to `assets/`; the template already references it.
+4. ~~Add an `og-image.png` (1200×630) to `assets/`~~ — done; see `assets/og-image.png`.
 5. Replace the placeholders: dates in privacy/terms, governing law, team bios on About,
    pricing figures once confirmed, attestation statuses on Security.
+
+## Heroku (current deployment)
+
+The site runs on Heroku as `arbiterai-site`, served by gunicorn + WhiteNoise from `wsgi.py`.
+`public/` is generated during the build by `bin/post_compile`, so it is never committed.
+
+```bash
+make serve-site                          # same stack locally on http://127.0.0.1:8765
+git subtree push --prefix site heroku main   # or: make deploy-site
+heroku logs --tail -a arbiterai-site
+```
+
+`SITE_URL` is a config var and sets the canonical origin baked into `<link rel=canonical>`,
+`og:url` and `sitemap.xml`. It is `https://www.arbiterai.tech`.
+
+### DNS at Squarespace
+
+Heroku publishes no static IPs, so an apex domain cannot point at it with A records, and
+Squarespace DNS has no ALIAS/ANAME record type. The site therefore lives on `www` and the
+apex forwards to it.
+
+| Where | Type | Host | Value |
+|---|---|---|---|
+| Squarespace DNS | CNAME | `www` | `protected-sinraptor-hr8yljyysuen6z4bu4ylvvf1.herokudns.com` |
+| Squarespace domain forwarding | — | `arbiterai.tech` | `https://www.arbiterai.tech` (301, forward path) |
+
+Remove the existing `www` CNAME to `ext-sq.squarespace.com` first; it points at the
+Squarespace "Coming Soon" page. Leave the SPF TXT record (`v=spf1 -all`) alone.
+
+Heroku's Automated Certificate Management is enabled and issues the TLS certificate once
+`www` resolves to the DNS target above. Check with `heroku certs:auto -a arbiterai-site`.
+There are no CAA records on the domain, so Let's Encrypt is not blocked.
 
 ## Launch checklist
 

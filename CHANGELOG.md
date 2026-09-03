@@ -279,3 +279,27 @@ strict, 0 cross-patient leaks, answer accuracy 0.95 (38/40; the two misses are t
 Tesseract misreads), 1 validation failure, 1 escalation, p50 3.6 s, p95 4.1 s, 0.013 cents
 per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four runs are in
 `platform/data/eval/` (git-ignored).
+
+## 2026-09-03 — marketing site deployed to Heroku
+
+- **`site/` gained a minimal Heroku target**: `Procfile`, `requirements.txt` (gunicorn,
+  WhiteNoise), `.python-version`, `app.json`, `wsgi.py`, `bin/post_compile`. The site is
+  static, so WhiteNoise serves `public/` and anything unmatched falls through to the
+  generated `404.html`. `bin/post_compile` runs `build.py` during slug compilation because
+  `public/` is generated and git-ignored.
+- **Security headers moved into the app.** `_headers` is read only by Netlify and
+  Cloudflare Pages, and `vercel.json` only by Vercel, so on Heroku the same policy is
+  applied by `wsgi.py`. HSTS is set without `preload`, which is a one-way commitment.
+- **`build.py` takes the canonical origin from `SITE_URL`.** It was hard-coded to
+  `https://arbiterai.tech`, which would have advertised the wrong host from a preview
+  deploy. The Heroku app sets `https://www.arbiterai.tech`.
+- **`make serve-site` now uses gunicorn** instead of `python -m http.server`, so what runs
+  locally is what runs in production, headers and 404 included. `make deploy-site` pushes
+  the `site/` subtree. `.claude/launch.json` follows.
+- **App `arbiterai-site` created in region us**, deployed from the `site/` subtree, all ten
+  pages plus assets, sitemap and robots verified live. Automated Certificate Management is
+  enabled and waiting on DNS.
+- **Not done: the dyno is Basic, not Eco.** `heroku ps:type eco` is refused until the
+  account holds an Eco subscription, which is a purchase to make in the dashboard.
+- **Not done: DNS at Squarespace.** The Chrome profile is signed out of Squarespace, and I
+  do not enter credentials. The records are in `site/README.md`.
