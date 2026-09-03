@@ -45,6 +45,12 @@ with a compliance officer.
 - [ ] `api_keys.key_prefix` is the first 12 characters, which is `hipaa_live_` plus one random character. Widen it if audit-log matching by prefix matters.
 - [ ] The `vlm` route, `CHECKPOINTER=postgres`, and the `gpu` compose profile are untested on this machine (no NVIDIA GPU). Verify on a GPU box.
 
+## Found reviewing the query path (2026-09-03)
+
+- [ ] **Re-identification only covers the question, never the documents.** `reidentify` restores tokens using the map from scrubbing the question. Tokens the model copies out of retrieved chunks (`<PERSON_3>` for the patient, `<PERSON_2>` for the attending) are never looked up in `phi_tokens`, so an answer to "who is the attending physician?" comes back as a placeholder. The encrypted per-document map in `phi_tokens` exists precisely for this and is never read on the query path.
+- [ ] **Token namespaces collide.** Every scrub numbers from `<PERSON_1>`, so the question's `<PERSON_1>` and each document's `<PERSON_1>` are different people with the same label. Demonstrated: question "What did Dr. Patel prescribe?" plus a chunk whose `<PERSON_1>` is Dr. Young produced the answer "Patel was started on metformin", a wrong re-identification. Fix both together: give tokens a per-document namespace (or number them per patient across documents), and have `reidentify` decrypt the cited documents' `phi_tokens` under the tenant key and restore only those, plus the question's own.
+- [ ] The output leak check (`contains_phi`) deliberately ignores `DATE_TIME` and `LOCATION`, so a raw date or address in an answer would pass. Dates and geography smaller than a state are Safe Harbor identifiers. Decide whether that is acceptable for the product and document it, or tighten the check.
+
 ## Found by the eval harness (synthetic data, 20 documents)
 
 - [ ] `audit_log` is not under RLS: `app_rw` can read every tenant's rows. Add a policy or a tenant-scoped view.
