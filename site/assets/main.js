@@ -22,8 +22,18 @@
     }
   }
 
-  // Contact / demo form. Works with Netlify Forms out of the box; swap action for Formspree if not on Netlify.
+  // Contact / demo form. Posts to /submit, which the site's WSGI app handles (see wsgi.py).
+  // Without JS the same POST still works and the server redirects back with ?sent=1.
   var form = document.querySelector('form[data-demo-form]');
+  function showPanel(sel) {
+    var el = document.querySelector(sel);
+    if (el) { el.style.display = 'block'; }
+    if (form && sel === '.form-ok') { form.style.display = 'none'; }
+  }
+  // Server-side (no-JS) round trip lands back here with a query flag.
+  if (/[?&]sent=1/.test(location.search)) { showPanel('.form-ok'); }
+  if (/[?&]error=1/.test(location.search)) { showPanel('.form-error'); }
+
   if (form) {
     form.addEventListener('submit', function (e) {
       var honeypot = form.querySelector('[name="company-site"]');
@@ -32,11 +42,15 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
       if (form.hasAttribute('data-ajax')) {
         e.preventDefault();
-        fetch(form.action, { method: 'POST', body: new FormData(form), headers: { Accept: 'application/json' } })
-          .then(function (r) { if (!r.ok) throw new Error('bad status'); form.style.display = 'none';
-            var ok = document.querySelector('.form-ok'); if (ok) ok.style.display = 'block'; })
+        // URLSearchParams sends application/x-www-form-urlencoded, which the handler parses.
+        fetch(form.action, {
+          method: 'POST',
+          body: new URLSearchParams(new FormData(form)),
+          headers: { Accept: 'application/json' }
+        })
+          .then(function (r) { if (!r.ok) throw new Error('bad status'); showPanel('.form-ok'); })
           .catch(function () { if (btn) { btn.disabled = false; btn.textContent = 'Request a demo'; }
-            alert('Something went wrong. Email hello@arbiterai.tech and we will reply within one business day.'); });
+            showPanel('.form-error'); });
       }
     });
   }

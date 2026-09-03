@@ -321,3 +321,27 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   return 200; an unknown path returns the 404 page; all six security headers are present;
   the canonical URL is `https://www.arbiterai.tech/`; and `arbiterai.tech/docs.html`
   301-redirects to `www.arbiterai.tech/docs.html`.
+
+## 2026-09-03 — contact form fixed, placeholder copy removed
+
+- **The demo request form worked on no host.** It carried Netlify-only markup
+  (`data-netlify="true"`, posting to a static page) and the site runs on Heroku, where a
+  POST to a static path returns 405. Verified against production before the fix. Every
+  submission was being lost.
+  `wsgi.py` now handles `POST /submit`: honeypot check, required-field and email validation,
+  then forwarding to `FORM_ENDPOINT`. Forwarding is server side, so the browser only talks
+  to this origin and the content security policy needs no third-party `connect-src`.
+  Works with JavaScript (fetch, no reload) and without it (303 back to
+  `/contact.html?sent=1`). With `FORM_ENDPOINT` unset the submission is written to the
+  application log, and the app warns about that at boot, so nothing is silently lost.
+- **`main.js`**: reveals the thank-you panel when the page loads with `sent=1`, which the
+  no-JavaScript round trip needs, and posts `URLSearchParams` rather than `FormData` so the
+  body is form-encoded and the handler can parse it without a multipart parser. A failed
+  submission now shows an error panel pointing at the mailbox instead of an alert box.
+- **Placeholder copy removed from the live site**: the "replace with date" lines on privacy
+  and terms now carry a real date; the "Replace with your jurisdiction" clause defers to the
+  customer's signed agreement rather than naming a jurisdiction nobody has chosen; the
+  "Founder and team bios go here" callout, the "Update this list as attestations are
+  completed" note, and the Netlify how-to under the form are gone. All were notes to
+  ourselves that shipped to visitors.
+- **`styles.css`**: a `.form-error` panel matching the existing `.form-ok` panel.

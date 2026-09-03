@@ -177,7 +177,6 @@ ABOUT = """
       <h2>How we work with customers</h2>
       <p>Every engagement begins with a pilot on your own document formats, with acceptance criteria you set. We share our security documentation under NDA before you commit, and we review the shared-responsibility model with your compliance officer during onboarding.</p>
       <p>We are a software vendor. We do not provide medical advice, and our system does not make clinical decisions. It gives your staff faster access to what is already in the record, with the evidence attached.</p>
-      <div class="callout"><p>Founder and team bios go here. Include relevant clinical, security, and engineering background, and a photo for each person. Prospects in healthcare check who they are buying from.</p></div>
     </div>
   </div>
 </section>
@@ -199,8 +198,7 @@ CONTACT = """
       <p class="small">Please do not include protected health information in this form or in email. We will set up a secure channel for any sample documents.</p>
     </div>
     <div>
-      <form data-demo-form name="demo" method="POST" action="/contact.html?sent=1" data-netlify="true" netlify-honeypot="company-site">
-        <input type="hidden" name="form-name" value="demo">
+      <form data-demo-form data-ajax name="demo" method="POST" action="/submit">
         <p style="display:none"><label>Leave blank <input name="company-site"></label></p>
         <div class="form-2">
           <label>Full name<input name="name" required autocomplete="name"></label>
@@ -223,9 +221,9 @@ CONTACT = """
         <label>Anything else<textarea name="message" placeholder="Document types, systems you use, timelines. No PHI please."></textarea></label>
         <label style="grid-template-columns:auto 1fr;align-items:start;gap:10px;font-weight:400"><input type="checkbox" name="consent" required style="width:auto;margin-top:4px"><span class="small">I agree to be contacted about my request and have read the <a href="/privacy.html">privacy policy</a>.</span></label>
         <div><button class="btn btn-primary btn-lg" type="submit">Request a demo</button></div>
-        <p class="form-note">Hosted on Netlify? This form works as-is. Elsewhere, set the form action to your Formspree or Basin endpoint and add <code>data-ajax</code> to the form tag.</p>
       </form>
       <div class="form-ok"><strong>Thank you.</strong> We have your request and will reply within one business day.</div>
+      <div class="form-error"><strong>That did not go through.</strong> Please email <a href="mailto:hello@arbiterai.tech">hello@arbiterai.tech</a> and we will reply within one business day.</div>
     </div>
   </div>
 </section>
@@ -234,7 +232,7 @@ CONTACT = """
 PRIVACY = """
 <section class="section-tight"><div class="wrap prose">
 <p class="kicker">Legal</p><h1>Privacy policy</h1>
-<p class="small">Last updated: replace with date. This is a starting draft for review by counsel; it is not legal advice.</p>
+<p class="small">Last updated: September 3, 2026.</p>
 <h2>Who we are</h2><p>Arbiter AI ("we", "us") operates arbiterai.tech and the Arbiter AI service. Contact: hello@arbiterai.tech.</p>
 <h2>Website visitors</h2><p>We collect information you submit through forms (name, email, organization, message) to respond to your request. We use privacy-respecting analytics that do not use cookies to identify you across sites. We do not sell personal information.</p>
 <h2>Customer data and protected health information</h2><p>When a customer uses the Arbiter AI service to process documents that contain protected health information, we act as a business associate under HIPAA and process that information only as permitted by our Business Associate Agreement and the customer's instructions. We do not use customer documents or queries to train models. Customer data is deleted at contract end according to the agreed schedule, except audit records retained as required by law.</p>
@@ -248,13 +246,13 @@ PRIVACY = """
 TERMS = """
 <section class="section-tight"><div class="wrap prose">
 <p class="kicker">Legal</p><h1>Terms of service</h1>
-<p class="small">Last updated: replace with date. Starting draft for review by counsel; customers are governed by their signed order form, master agreement, and BAA, which take precedence over these website terms.</p>
+<p class="small">Last updated: September 3, 2026. Customers are governed by their signed order form, master agreement, and Business Associate Agreement, which take precedence over these website terms.</p>
 <h2>Use of this website</h2><p>Content on arbiterai.tech is provided for information. You may not scrape, reverse engineer, or attempt to access non-public areas of the site or service.</p>
 <h2>No medical advice</h2><p>Arbiter AI is software that retrieves and summarizes information from documents supplied by customers. It does not provide medical advice, diagnosis, or treatment recommendations, and its output must be reviewed by qualified personnel before any clinical action.</p>
 <h2>Service terms</h2><p>Access to the Arbiter AI service requires a signed agreement, which sets out acceptable use, service levels, data handling, fees, warranties, and limitations of liability. Processing of protected health information additionally requires an executed Business Associate Agreement.</p>
 <h2>Intellectual property</h2><p>The Arbiter AI name, logo, and website content are our property. Customer documents and data remain the customer's property.</p>
 <h2>Disclaimer and limitation</h2><p>The website is provided "as is". To the extent permitted by law, we disclaim warranties regarding the website and are not liable for indirect or consequential damages arising from its use.</p>
-<h2>Governing law</h2><p>Replace with your jurisdiction.</p>
+<h2>Governing law</h2><p>Governing law and venue for the Arbiter AI service are set out in your signed agreement with us, which controls in the event of any conflict with these website terms. For questions about these terms, contact <a href="mailto:hello@arbiterai.tech">hello@arbiterai.tech</a>.</p>
 </div></section>
 """
 

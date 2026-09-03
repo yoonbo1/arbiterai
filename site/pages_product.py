@@ -158,7 +158,6 @@ SECURITY = """
         <li style="padding:10px 0;border-top:1px solid var(--line)"><span class="badge gold">In progress</span>&nbsp; SOC 2 Type II</li>
         <li style="padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)"><span class="badge gold">Planned</span>&nbsp; HITRUST assessment</li>
       </ul>
-      <p class="small" style="margin-top:12px">Update this list as attestations are completed. Do not claim a certification before the report is issued.</p>
     </div>
   </div>
 </section>
