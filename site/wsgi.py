@@ -11,6 +11,10 @@ Two things are not static:
 * The demo request form. It POSTs to /submit, handled below: honeypot check, validation,
   then forward to FORM_ENDPOINT. Forwarding happens server side, so the browser only ever
   talks to this origin and the CSP needs no third-party connect-src.
+* Canonical host redirect. Both arbiterai.tech and www.arbiterai.tech point here; requests
+  for the non-canonical one are redirected so there is a single indexable host. This is done
+  in the app rather than at the DNS provider because Squarespace's domain forwarding serves
+  its own parking page at the root path and only forwards deeper paths.
 """
 import json
 import logging
@@ -49,6 +53,24 @@ SECURITY_HEADERS = {
 def _add_headers(headers, path, url):
     for key, value in SECURITY_HEADERS.items():
         headers[key] = value
+
+
+# ------------------------------------------------------------- canonical host redirect
+# Everything the site advertises (canonical, og:url, sitemap) uses this origin, so any other
+# host that resolves here is redirected to it. herokuapp.com is left alone so the app's own
+# URL stays usable for smoke tests.
+CANONICAL_HOST = urllib.parse.urlsplit(
+    os.environ.get("SITE_URL", "https://www.arbiterai.tech")).netloc.lower()
+
+
+def _canonical_redirect(environ):
+    """Return the URL to redirect to, or None to serve normally."""
+    host = (environ.get("HTTP_HOST") or "").split(":")[0].lower()
+    if not host or host == CANONICAL_HOST or host.endswith(".herokuapp.com"):
+        return None
+    path = environ.get("PATH_INFO", "/")
+    query = environ.get("QUERY_STRING", "")
+    return f"https://{CANONICAL_HOST}{path}" + (f"?{query}" if query else "")
 
 
 # ---------------------------------------------------------------- demo request form
@@ -154,8 +176,14 @@ _static = WhiteNoise(
 
 
 def app(environ, start_response):
-    """WhiteNoise answers GET/HEAD for the generated files. The form POST is intercepted
-    first, because WhiteNoise rejects any non-GET method with 405."""
+    """WhiteNoise answers GET/HEAD for the generated files. Two things come first: the
+    canonical host redirect, and the form POST, because WhiteNoise rejects any non-GET
+    method with 405."""
+    target = _canonical_redirect(environ)
+    if target:
+        start_response("301 Moved Permanently",
+                       [("Location", target), ("Content-Length", "0"), *SECURITY_HEADERS.items()])
+        return [b""]
     if environ.get("PATH_INFO") == FORM_PATH:
         if environ.get("REQUEST_METHOD") == "POST":
             return _handle_submit(environ, start_response)
