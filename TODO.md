@@ -54,15 +54,16 @@ with a compliance officer.
 - [ ] Ages over 89 and other Safe Harbor identifiers not present in the synthetic corpus (device serials, biometric identifiers, full-face photos, vehicle identifiers, account numbers) are not exercised. Extend the synthetic generator before trusting recall.
 - [ ] The eval only ingests one document type and asks two gold questions per patient. Add negative questions (answer not in record), multi-document patients, and cross-patient probes that name another patient.
 
-## Site (before launch)
+## Site (it is live now, so these are live defects)
 
 - [ ] Do not publish SOC 2 or HITRUST claims until the report is issued (currently listed as "In progress" / "Planned", which is accurate).
 - [ ] Confirm claims on the Security and Pricing pages that are not yet backed: "Independent penetration test summary: Available", "flow-down BAAs with all subprocessors", "99.9% uptime SLA".
-- [ ] Contact form success state: the Netlify action returns to `/contact.html?sent=1` but `main.js` only shows `.form-ok` on the `data-ajax` path. Show it when `sent=1` is in the query string.
+- [ ] **The contact form is broken on the live site.** It is Netlify-specific markup (`data-netlify="true"`, posting to `/contact.html?sent=1`) and the site now runs on Heroku, where a POST to a static page returns 405. Verified against production on 2026-09-03. Every demo request submitted right now is lost. Pick a form backend (Formspree, Basin, or a small POST handler in `wsgi.py`), point `action` at it, add `data-ajax` to the form tag, and add its origin to `connect-src` in the CSP in `wsgi.py`.
+- [ ] Contact form success state: `main.js` only reveals `.form-ok` on the `data-ajax` path, so a non-AJAX submitter lands back on a blank form. Show it when `sent=1` is in the query string too.
 - [ ] Remove placeholder copy that is currently public: "Last updated: replace with date" (privacy, terms), "Replace with your jurisdiction" (terms), "Founder and team bios go here" (about), "Update this list as attestations are completed" (security), "Hosted on Netlify? ..." (contact).
 - [ ] Product page ledger (`ledger(animate=False)`) renders every row at 45% opacity with empty check marks; mark rows `done` when not animating.
 - [ ] Contrast below WCAG AA: white on brass buttons (3.2:1), kicker `#8F6E2B` on frost (4.3:1), the two badge styles (about 4.1:1).
-- [ ] Vercel `cleanUrls: true` redirects every `.html` link, canonical, and sitemap URL; drop it or emit extensionless URLs. `_headers` is Netlify/Cloudflare-only; Vercel needs a `headers` block in `vercel.json`.
+- [ ] Stale host configs now that the site runs on Heroku: `netlify.toml`, `vercel.json` and `_headers` are all dead files there (`wsgi.py` applies the headers instead). Either delete them or keep them working: `vercel.json`'s `cleanUrls: true` would 308-redirect every `.html` link, canonical and sitemap URL.
 - [ ] Sticky header: add `html{scroll-padding-top:80px}` so anchors like `#baa` clear it by design rather than by section padding.
 - [ ] Mark required form fields visibly; enlarge the consent checkbox.
 - [ ] Align the docs page's credential prefix (`arb_live_`) and API host (`api.arbiterai.tech`) with the platform (`hipaa_live_`, no public host yet).
