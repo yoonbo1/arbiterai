@@ -4,7 +4,7 @@ No real patient data is involved. Usage: python scripts/make_synthetic_docs.py -
 
 For richer records, run Synthea (https://github.com/synthetichealth/synthea) and point
 --synthea_csv at its patients.csv; this script will use those names/DOBs instead of Faker."""
-import argparse, csv, json, random
+import argparse, csv, io, json, random
 from pathlib import Path
 
 from faker import Faker
@@ -70,14 +70,17 @@ def write_pdf(rec, path):
 
 
 def scan_it(src, dst):
+    """Rasterize, tilt, blur, threshold, and embed as a 1-bit image with no text layer, the
+    way a fax or a flatbed scan arrives. The image goes in as a compressed PNG stream, which
+    keeps a page at ~15 KB instead of the ~2 MB that inserting a decoded RGB bitmap produced."""
     doc = fitz.open(src); out = fitz.open()
     for p in doc:
         pix = p.get_pixmap(dpi=150); img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         img = img.rotate(random.uniform(-1.5, 1.5), fillcolor="white", expand=False)
         img = img.filter(ImageFilter.GaussianBlur(0.6)).convert("L").point(lambda v: 255 if v > 165 else v)
-        tmp = dst.with_suffix(".png"); img.save(tmp)
-        page = out.new_page(width=pix.width, height=pix.height); page.insert_image(page.rect, filename=str(tmp)); tmp.unlink()
-    out.save(dst)
+        buf = io.BytesIO(); img.convert("1", dither=Image.NONE).save(buf, "PNG")   # hard threshold, no dither speckle
+        page = out.new_page(width=pix.width, height=pix.height); page.insert_image(page.rect, stream=buf.getvalue())
+    out.save(dst, garbage=4, deflate=True); out.close()
 
 
 def main():
