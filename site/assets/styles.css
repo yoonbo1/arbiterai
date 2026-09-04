@@ -224,3 +224,118 @@ pre code{background:none;padding:0}
 .badge.gold{background:#F4ECDA;color:var(--brass-2)}
 
 @media (prefers-reduced-motion:reduce){.ledger li{transition:none}}
+
+/* ---------------------------------------------------------------- Blog index */
+.blog-list{display:grid;gap:24px;max-width:820px}
+.blog-card{background:var(--white);border:1px solid var(--line);border-radius:10px;padding:30px 30px 24px;min-width:0}
+.blog-card-meta{font-family:var(--mono);font-size:.78rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.blog-card h2{font-size:1.6rem;margin-bottom:.35em}
+.blog-card h2 a{text-decoration:none}
+.blog-card h2 a:hover{color:var(--brass-2)}
+.blog-card-summary{color:var(--muted);margin-bottom:22px}
+.blog-feed{max-width:820px;margin-top:26px}
+
+/* ---------------------------------------------------------------- Article */
+.post-body{max-width:820px}
+.post-body h2{scroll-margin-top:90px}
+.post-meta{font-family:var(--mono);font-size:.82rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:10px;margin-bottom:22px}
+.post-expansion{font-family:var(--serif);font-style:italic;color:var(--brass-2);margin:-.5em 0 1.1em}
+.post-sources li{font-size:.94rem;color:var(--muted)}
+.post-backlink{margin-top:2.6em;padding-top:20px;border-top:1px solid var(--line)}
+.post-backlink a{color:var(--brass-2);text-decoration:none;font-weight:600}
+
+/* Figures rebuilt from the source article's drawings */
+.post-fig{margin:36px 0;padding:26px 26px 20px;background:var(--white);border:1px solid var(--line);border-radius:10px}
+.post-fig figcaption{margin-top:20px;padding-top:14px;border-top:1px solid var(--line);font-size:.9rem;color:var(--muted)}
+.post-fig-head{font-family:var(--serif);font-style:italic;color:var(--brass-2);font-size:1rem;margin-bottom:20px}
+.post-compare{gap:24px}
+.post-panel{background:var(--frost);border:1px solid var(--line);border-radius:8px;padding:20px;min-width:0;display:flex;flex-direction:column}
+.post-panel-year{font-family:var(--mono);font-size:.8rem;color:var(--brass-2);margin-bottom:14px}
+.post-panel-title{font-size:1.02rem;margin-bottom:.7em}
+.post-panel .small{margin:auto 0 0;padding-top:12px}
+.post-panel-code{padding:20px 16px}
+.post-panel-code pre{margin:0;font-size:.78rem;padding:14px 16px;line-height:1.5}
+
+/* Timeline (term list, HIPAA rulemaking) */
+.post-fig .post-timeline{list-style:none;margin:0;padding:0}
+.post-timeline li{display:grid;grid-template-columns:52px minmax(0,1fr);column-gap:18px;margin:0}
+.post-timeline .yr{font-family:var(--mono);font-size:.82rem;color:var(--brass-2);text-align:right;padding-top:4px}
+.post-timeline .tl{border-left:1px solid var(--line);padding:0 0 24px 22px;position:relative;min-width:0}
+.post-timeline li:last-child .tl{border-left-color:transparent;padding-bottom:0}
+.post-timeline .tl::before{content:"";position:absolute;left:-5px;top:6px;width:9px;height:9px;border-radius:50%;background:var(--brass)}
+.post-timeline b{display:block;font-family:var(--serif);font-weight:500;font-size:1.1rem;line-height:1.25}
+.post-timeline em{display:block;color:var(--brass-2);font-size:.88rem;margin:1px 0 4px}
+.post-timeline p{margin:0;font-size:.94rem;color:var(--muted);max-width:54ch}
+.post-timeline-plain b{font-size:1.02rem;font-family:var(--sans);font-weight:600}
+
+/* ICD then and now */
+.post-causes li{font-size:.95rem;margin-bottom:.2em}
+.post-code-big{font-family:var(--mono);font-size:clamp(1.5rem,6vw,2.1rem);letter-spacing:.02em;text-align:center;margin:4px 0 18px;color:var(--ink)}
+.post-split{margin:0;display:grid;gap:8px}
+.post-split>div{display:grid;grid-template-columns:42px minmax(0,1fr);gap:12px;align-items:baseline}
+.post-split dt{font-family:var(--mono);font-size:.95rem;color:var(--brass-2);text-align:right}
+.post-split dd{margin:0;font-size:.92rem;color:var(--muted);border-left:1px solid var(--line-2);padding-left:12px}
+
+/* One folder per patient */
+.post-panel .post-cards{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.post-cards li{background:var(--white);border:1px solid var(--line-2);border-radius:6px;padding:11px 14px;font-size:.93rem;margin:0}
+.post-cards-stamped li{font-family:var(--mono);color:var(--brass-2);border-color:var(--brass);letter-spacing:.05em}
+
+/* Free-text note versus SOAP */
+.post-scribble{display:grid;gap:9px;background:var(--white);border:1px solid var(--line-2);border-radius:6px;padding:17px 16px}
+.post-scribble span{display:block;height:3px;border-radius:2px;background:var(--line-2)}
+.post-soap{margin:0;display:grid;gap:9px}
+.post-soap>div{display:grid;grid-template-columns:26px minmax(0,1fr);gap:12px;align-items:baseline;background:var(--white);border:1px solid var(--line);border-radius:6px;padding:9px 14px}
+.post-soap dt{font-family:var(--serif);font-size:1.15rem;font-weight:500;color:var(--brass-2)}
+.post-soap dd{margin:0;font-size:.93rem}
+
+/* Re-identification funnel */
+.post-fig .post-funnel{list-style:none;margin:0;padding:0}
+.post-funnel li{position:relative;display:flex;justify-content:space-between;align-items:baseline;gap:14px;background:var(--frost);border:1px solid var(--line-2);border-radius:6px;padding:13px 16px;margin:0 0 32px;font-size:.94rem;min-width:min(100%,11rem)}
+.post-funnel li::after{content:"";position:absolute;left:26px;bottom:-25px;border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--line-2)}
+.post-funnel li:last-child{margin-bottom:0}
+.post-funnel li:last-child::after{content:none}
+.post-funnel b{font-family:var(--mono);text-align:right}
+.post-funnel b.note{font-family:var(--sans);font-weight:400;font-size:.88rem;color:var(--muted)}
+.post-funnel li.last{border-color:var(--brass);border-width:1.5px;background:#F4ECDA}
+.post-funnel li.last b{color:var(--brass-2);font-size:1.2rem}
+
+/* Regulator reach, before and after */
+.post-svg{width:100%;height:auto;margin-bottom:8px}
+.post-svg .bx{fill:var(--white);stroke:var(--line-2);stroke-width:1}
+.post-svg .bx.out{fill:none;stroke-dasharray:3 3}
+.post-svg .lb{font-family:var(--sans);font-size:12px;fill:var(--text);text-anchor:middle}
+.post-svg .mut{font-family:var(--sans);font-size:9.5px;fill:var(--muted)}
+.post-svg .lb.mut{font-size:12px;fill:var(--muted)}
+.post-svg .ln{stroke:var(--ink);stroke-width:1.4;fill:none}
+.post-svg .ln.dot{stroke:var(--line-2);stroke-dasharray:3 3}
+.post-svg .ln.go{stroke:var(--verd)}
+
+/* EHR adoption bars */
+.post-bars{gap:28px 40px}
+.post-bar-group{min-width:0}
+.post-bar-cols{display:flex;align-items:flex-end;gap:0}
+.post-bar{flex:1;min-width:0}
+.post-bar-track{height:150px;display:flex;align-items:flex-end;justify-content:center;border-bottom:1px solid var(--line-2)}
+.post-bar-fill{position:relative;display:block;width:calc(100% - 22px);max-width:72px;min-height:3px;background:var(--brass);border-radius:3px 3px 0 0}
+.post-bar-fill.hi{background:var(--verd)}
+.post-bar-fill b{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% + 6px);font-family:var(--mono);font-size:.85rem;color:var(--ink)}
+.post-bar-fill.hi b{color:var(--verd-2)}
+.post-bar-x{display:block;font-family:var(--mono);font-size:.72rem;color:var(--muted);text-align:center;padding-top:8px}
+.post-bar-label{font-weight:600;font-size:.95rem;text-align:center;margin:8px 0 0}
+
+/* Quick reference */
+.post-quickref{margin:0;border-top:1px solid var(--line)}
+.post-quickref>div{display:grid;grid-template-columns:minmax(0,160px) minmax(0,1fr);gap:6px 20px;padding:12px 0;border-bottom:1px solid var(--line)}
+.post-quickref dt{font-weight:600}
+.post-quickref dd{margin:0;color:var(--muted);font-size:.95rem}
+
+@media (max-width:640px){
+  .post-fig{padding:18px 16px 16px;margin:28px 0}
+  .post-panel{padding:16px}
+  .blog-card{padding:24px 22px 20px}
+  .post-quickref>div{grid-template-columns:1fr}
+  .post-timeline li{grid-template-columns:44px minmax(0,1fr);column-gap:14px}
+  .post-timeline .tl{padding-left:18px}
+  .post-bar-track{height:120px}
+}

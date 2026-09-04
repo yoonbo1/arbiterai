@@ -481,3 +481,26 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
 - **`TODO.md` opens with a needs-you table**: a deep link and the exact value to enter for
   each item only the founder can do.
 - Tests: 130 passed, 2 skipped, 2 xfailed.
+
+## 2026-09-04 — blog section
+
+- **`site/pages_blog.py` (new), plus a blog index and the first article.** "Medical record
+  acronyms: what each one means and why it exists", fourteen terms with their history and
+  why each matters to software, published from a supplied PDF.
+- **The PDF's text layer had broken ligatures**, so a straight paste would have shipped a
+  page of typos: "The" extracted as "Te" thirty times, plus "sofware", "afer", "ofen",
+  "lef", and 45 `fi`/`ff` ligature characters. All repaired and verified as zero matches in
+  the built output. The article's line that no HIPAA certification exists is preserved
+  verbatim; it is the same position the security page takes.
+- **The nine diagrams were vector drawings, not images**, so they were rebuilt in the site's
+  palette: a fourteen-term timeline, the 1893 cause-of-death list against a modern ICD-10-CM
+  code, the Mayo folder before and after 1907, free text against SOAP, the HIPAA rulemaking
+  timeline, the Sweeney re-identification funnel, regulator reach before and after HITECH
+  (inline SVG), the HITECH adoption bars, and an HL7 v2 message beside the same patient as
+  FHIR.
+- **Built for crawlers**: both pages in `sitemap.xml` with the article carrying its
+  publication date as `lastmod`; `BlogPosting` and `BreadcrumbList` structured data on the
+  article and `Blog` on the index, all valid JSON; `og:type=article` with
+  `article:published_time` on the post only; an RSS feed at `/feed.xml` linked from every
+  page's head; Blog added to the nav and the footer. The PDF is downloadable from the
+  article, but the HTML is canonical.

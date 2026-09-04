@@ -1,14 +1,15 @@
 # arbiterai.tech — marketing site
 
-Static, dependency-free site. Ten pages, one stylesheet, one small script. Built by `build.py`
-so the header, footer, and metadata live in one place.
+Static, dependency-free site. Twelve pages, one stylesheet, one small script. Built by
+`build.py` so the header, footer, and metadata live in one place.
 
 ```
 build.py           shell template + build (python3 build.py → public/)
 pages.py           page registry, pricing, docs, about, contact, legal, 404
 pages_home.py      home page and the "chain of custody" ledger component
 pages_product.py   product and security pages
-assets/            styles.css, main.js, logo.svg, favicon.svg
+pages_blog.py      blog index, post metadata (POSTS) and article bodies
+assets/            styles.css, main.js, logo.svg, favicon.svg, article PDF
 wsgi.py            Heroku entry point: WhiteNoise, security headers, 404 fallback, form POST
 Procfile, bin/     gunicorn command; bin/post_compile runs build.py during the slug build
 ```
@@ -121,3 +122,11 @@ Heroku's Automated Certificate Management issued the Let's Encrypt certificate f
 Copy lives in `pages*.py` as HTML strings. Colors and type are CSS variables at the top of
 `assets/styles.css`. Navigation is the `NAV` list in `build.py`. Run `python3 build.py`
 after any change; the host rebuilds automatically on push.
+
+To add a blog post, append a dict to `POSTS` in `pages_blog.py` (slug, path under `blog/`,
+titles, description, summary, ISO date, reading time, section, body HTML). `BLOG_PAGES`
+feeds it into `PAGES`, and the index page, `sitemap.xml` (with the post's own `lastmod`),
+`feed.xml`, the `BlogPosting`/`BreadcrumbList` JSON-LD and the `article:*` meta tags are all
+generated from the same entry. A `PAGES` row may carry an optional fifth element, a meta
+dict of `og_type`, `lastmod` and `head` (an extra `<head>` fragment where `__SITE__` is
+replaced with the canonical origin).

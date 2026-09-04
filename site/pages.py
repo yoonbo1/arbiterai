@@ -1,5 +1,6 @@
 from pages_home import HOME
 from pages_product import PRODUCT, SECURITY
+from pages_blog import BLOG_PAGES
 
 PRICING = """
 <section class="hero" style="padding-bottom:40px">
@@ -275,6 +276,9 @@ PAGES = [
      "Submit a document, ask a question, read a cited answer. API reference for the Arbiter AI service.", DOCS),
     ("about.html", "About Arbiter AI",
      "We build the verification layer for clinical AI: structural isolation, mandatory citations, and de-identification by default.", ABOUT),
+    # Blog index and one entry per post. Each carries a meta dict (og:type, sitemap
+    # lastmod, JSON-LD) that build.py's render() folds into the shared shell.
+    *BLOG_PAGES,
     ("contact.html", "Request a demo — Arbiter AI",
      "Request a demo, pilot pricing, or the security package for your compliance review.", CONTACT),
     ("privacy.html", "Privacy policy — Arbiter AI", "How Arbiter AI handles website visitor data and customer data.", PRIVACY),
