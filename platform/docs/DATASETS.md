@@ -123,6 +123,14 @@ RVL-CDIP is the right corpus to validate that the text / OCR / vision router doe
 right thing on handwriting, forms, and bad scans at scale. It is not clinical, and it
 must never ship in a product or a fixture. No public dataset of medical faxes exists.
 
+Two licensing tiers within these. Everything derived from the UCSF Industry Documents
+Library (RVL-CDIP, Tobacco-3482, FUNSD, DocVQA, IDL-WDS) and the handwriting sets IAM,
+CVL and XFUND are research-only. Commercially clean scanned-document data is DocLayNet
+(CDLA-Permissive), DocBank (Apache 2.0), CORD (CC BY), and the NIST tax-form sets SD2, SD6
+and SD19, which are US government works with no copyright. Harvard DBMI also publishes a
+separate corporate-user agreement for the n2c2 sets, so companies are an explicitly
+recognized applicant class there, even though the clauses could not be retrieved.
+
 ## 3. Synthetic text at scale: Synthea, measured on this machine
 
 Synthea (MITRE, Apache 2.0, last release August 2026) generates whole patient histories.
