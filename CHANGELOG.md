@@ -448,3 +448,36 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   with no dither. Verified unchanged extraction on two scanned documents.
 - **Java 21 installed** (Homebrew, keg-only at `/opt/homebrew/opt/openjdk@21`) to run
   Synthea. No launchd items.
+
+## 2026-09-04 — re-identification fixed, titles are not names, site polish live
+
+- **Query path: document tokens are now re-identified** (`worker/reid.py`). The retrieved
+  chunks and the question are renumbered into one token namespace per query, with an index
+  of where each token came from. After validation, only the tokens the answer uses are
+  restored: question tokens from memory, document tokens decrypted from `phi_tokens` under
+  the tenant key. Before, only the question's map was applied, so "who is the attending
+  physician?" returned a placeholder and a question about Dr. Patel could name Patel where
+  the chart said Young. Verified live: the same question now returns "Dr. Hawkins".
+- **De-identification: bare titles and field labels are no longer PERSON spans.** spaCy was
+  tagging "Dr" as a person, so charts read `<PERSON_2>. <PERSON_1>` and the model answered
+  with the title as the name. PERSON spans are trimmed of leading titles ("Dr", "Mrs") and
+  trailing labels ("DOB", "Date"), and dropped if nothing remains.
+- **Synthetic scans: grayscale again, still small.** Yesterday's 1-bit 150 dpi scans were 13
+  KB but OCR'd worse (drug names came out as "metiormin" and "fisinoprif"; extraction F1 on
+  medications fell from 0.98 to 0.90). The measured cause was the encoding, not the fix for
+  the 2 MB bloat. Scans are now the original 150 dpi grayscale embedded as a compressed
+  stream, 45 KB per page and pixel-identical to the validated corpus; `--scan-mode bilevel`
+  gives 1-bit at 300 dpi (30 KB) as an opt-in fax-realism mode. Extraction after the change:
+  problems 1.00, medications 1.00 by name and 1.00 by name+dose+frequency, labs 0.99,
+  vitals 1.00, allergies 1.00. QA eval unchanged: accuracy 0.95, zero cross-patient leaks,
+  de-id recall 0.992 with the same single OCR-label survivor.
+- **Site polish deployed (release v9).** Static ledger reads as completed; every text pair
+  clears WCAG AA (brass button 3.2 to 6.1, kicker 4.3 to 6.5, badges 4.1 to 5.8 and 6.1);
+  scroll padding under the sticky header; visible required-field markers and an 18 px
+  consent checkbox; smooth scroll gated on reduced-motion; full Open Graph and Twitter meta;
+  footer year baked at build time; docs examples use the platform's real `hipaa_live_`
+  prefix and a `<your-deployment>` host; the dead Netlify, Vercel and `_headers` files are
+  gone. Copy and claims untouched.
+- **`TODO.md` opens with a needs-you table**: a deep link and the exact value to enter for
+  each item only the founder can do.
+- Tests: 130 passed, 2 skipped, 2 xfailed.

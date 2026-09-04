@@ -69,23 +69,31 @@ def write_pdf(rec, path):
     c.showPage(); c.save()
 
 
-def scan_it(src, dst):
-    """Rasterize, tilt, blur, threshold, and embed as a 1-bit image with no text layer, the
-    way a fax or a flatbed scan arrives. The image goes in as a compressed PNG stream, which
-    keeps a page at ~15 KB instead of the ~2 MB that inserting a decoded RGB bitmap produced."""
+def scan_it(src, dst, mode="gray"):
+    """Rasterize, tilt, blur, threshold, and embed with no text layer, the way a scan or fax
+    arrives. The image goes in as a compressed stream, ~45 KB per page for grayscale; inserting
+    a decoded bitmap (the original code) produced ~2 MB per page.
+      gray    : 150 dpi 8-bit grayscale PNG. Pixel-identical to the validated corpus. Default.
+      bilevel : 300 dpi 1-bit PNG, hard threshold, no dither; fax-like, ~30 KB. Tesseract reads
+                1-bit pages worse at 150 dpi, so bilevel is only offered at 300."""
+    dpi = 300 if mode == "bilevel" else 150
     doc = fitz.open(src); out = fitz.open()
     for p in doc:
-        pix = p.get_pixmap(dpi=150); img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        pix = p.get_pixmap(dpi=dpi); img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         img = img.rotate(random.uniform(-1.5, 1.5), fillcolor="white", expand=False)
-        img = img.filter(ImageFilter.GaussianBlur(0.6)).convert("L").point(lambda v: 255 if v > 165 else v)
-        buf = io.BytesIO(); img.convert("1", dither=Image.NONE).save(buf, "PNG")   # hard threshold, no dither speckle
-        page = out.new_page(width=pix.width, height=pix.height); page.insert_image(page.rect, stream=buf.getvalue())
+        img = img.filter(ImageFilter.GaussianBlur(0.6 * dpi / 150)).convert("L").point(lambda v: 255 if v > 165 else v)
+        if mode == "bilevel":
+            img = img.convert("1", dither=Image.NONE)
+        buf = io.BytesIO(); img.save(buf, "PNG")
+        page = out.new_page(width=pix.width * 72 / dpi, height=pix.height * 72 / dpi)
+        page.insert_image(page.rect, stream=buf.getvalue())
     out.save(dst, garbage=4, deflate=True); out.close()
 
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--out", default="data/synthetic"); ap.add_argument("--synthea_csv")
+    ap.add_argument("--scan-mode", choices=["gray", "bilevel"], default="gray")
     a = ap.parse_args(); out = Path(a.out); (out / "clean").mkdir(parents=True, exist_ok=True); (out / "scan").mkdir(exist_ok=True)
     synth = None
     if a.synthea_csv:
@@ -96,7 +104,7 @@ def main():
         rec = record(i, synth[i % len(synth)] if synth else None)
         clean = out / "clean" / f"{rec['patient_external_id']}.pdf"; write_pdf(rec, clean)
         if i % 2:  # half the corpus goes through the OCR/VLM path
-            scan_it(clean, out / "scan" / clean.name)
+            scan_it(clean, out / "scan" / clean.name, a.scan_mode)
         al, reaction = rec["allergy"]
         manifest.append({**rec, "injected_phi": [rec["name"], rec["dob"], rec["mrn"], rec["phone"], rec["address"], rec["physician"]],
                          "gold_qa": [{"q": "What is the patient's most recent HbA1c?", "a": f"{rec['a1c']}%"},
