@@ -11,8 +11,9 @@ def ledger(animate=True):
         ("Answer verified", "Citations required, leak check passed, grounded 0.94", "4.7 s"),
         ("Audit written", "Who, what, when. Append-only.", "4.7 s"),
     ]
+    cls = "" if animate else ' class="done"'
     lis = "".join(
-        f'<li><span class="mark">{CHECK}</span><div><div class="step-name">{n}</div><div class="step-desc">{d}</div></div><span class="step-meta">{m}</span></li>'
+        f'<li{cls}><span class="mark">{CHECK}</span><div><div class="step-name">{n}</div><div class="step-desc">{d}</div></div><span class="step-meta">{m}</span></li>'
         for n, d, m in steps)
     return (f'<div class="ledger"{" data-animate" if animate else ""} aria-label="Chain of custody for one request">'
             f'<div class="ledger-title"><strong>Chain of custody</strong><span>job 7f3a…c21e</span></div><ol>{lis}</ol>'

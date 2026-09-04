@@ -6,8 +6,8 @@ no file falls through to the generated 404 page.
 
 Two things are not static:
 
-* Security headers, applied here because _headers is read only by Netlify and Cloudflare
-  Pages, and vercel.json only by Vercel. Same policy, one place per host.
+* Security headers, applied here. Heroku has no static-host header file, so the policy
+  lives in this one place.
 * The demo request form. It POSTs to /submit, handled below: honeypot check, validation,
   then forward to FORM_ENDPOINT. Forwarding happens server side, so the browser only ever
   talks to this origin and the CSP needs no third-party connect-src.
@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 PUBLIC = Path(__file__).parent / "public"
 
-# Mirrors _headers. HSTS without `preload`: preloading is a one-way commitment that is hard
+# HSTS without `preload`: preloading is a one-way commitment that is hard
 # to undo, so opt in deliberately once the domain is settled.
 CSP = ("default-src 'self'; "
        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
@@ -156,7 +156,7 @@ def _handle_submit(environ, start_response):
 
 
 def _not_found(environ, start_response):
-    """Everything WhiteNoise could not serve. Netlify does this with a redirect rule."""
+    """Everything WhiteNoise could not serve."""
     page = PUBLIC / "404.html"
     body = page.read_bytes() if page.exists() else b"<h1>Page not found</h1>"
     start_response("404 Not Found",

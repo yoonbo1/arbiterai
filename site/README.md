@@ -9,24 +9,24 @@ pages.py           page registry, pricing, docs, about, contact, legal, 404
 pages_home.py      home page and the "chain of custody" ledger component
 pages_product.py   product and security pages
 assets/            styles.css, main.js, logo.svg, favicon.svg
-netlify.toml       Netlify build + 404 redirect
-vercel.json        Vercel build config
-_headers           security headers (Netlify/Cloudflare Pages format)
+wsgi.py            Heroku entry point: WhiteNoise, security headers, 404 fallback, form POST
+Procfile, bin/     gunicorn command; bin/post_compile runs build.py during the slug build
 ```
 
-## Deploy in 15 minutes
+## Deploy
 
-1. Push this folder to a Git repo.
-2. **Netlify** (recommended: forms work with zero setup): New site → import repo → build command
-   `python3 build.py`, publish directory `public`. Enable Forms in the site settings.
-   **Vercel**: import repo; `vercel.json` is already configured. Point the contact form at a
-   Formspree/Basin endpoint and add `data-ajax` to the `<form>` tag.
-   **Cloudflare Pages / GitHub Pages**: run `python3 build.py` in CI and publish `public/`.
-3. Add the custom domain `arbiterai.tech` (and `www`) in the host dashboard. At your registrar
-   set the A/ALIAS record for the apex and a CNAME for `www` as the host instructs. HTTPS is automatic.
-4. ~~Add an `og-image.png` (1200×630) to `assets/`~~ — done; see `assets/og-image.png`.
-5. Replace the placeholders: dates in privacy/terms, governing law, team bios on About,
-   pricing figures once confirmed, attestation statuses on Security.
+Heroku only; the next section has the app, the build hook and DNS. The former Netlify,
+Vercel and Cloudflare Pages configs (`netlify.toml`, `vercel.json`, `_headers`) were removed:
+on Heroku `wsgi.py` applies the security headers, serves the 404 page and handles the form
+POST, so those files were dead, and `vercel.json`'s `cleanUrls` would have redirected every
+`.html` link, canonical and sitemap URL.
+
+If you ever move hosts: run `python3 build.py` in that host's CI, publish `public/`, and
+reproduce the three things `wsgi.py` does (security headers, `404.html` fallback, `/submit`
+form handler) in the new host's own configuration.
+
+Before launch, replace the placeholders: dates in privacy/terms, governing law, team bios on
+About, pricing figures once confirmed, attestation statuses on Security.
 
 ## Heroku (current deployment)
 
@@ -95,7 +95,7 @@ Heroku's Automated Certificate Management issued the Let's Encrypt certificate f
 - [ ] Calendar link (Cal.com / Calendly) in the autoresponder for scoping calls
 
 **Analytics and SEO**
-- [ ] Privacy-respecting analytics (Plausible, Fathom, or Cloudflare Web Analytics): one script tag in `build.py`, then add its domain to the CSP in `_headers`
+- [ ] Privacy-respecting analytics (Plausible, Fathom, or Cloudflare Web Analytics): one script tag in `build.py`, then add its domain to the CSP in `wsgi.py`
 - [ ] Submit `sitemap.xml` in Google Search Console and Bing Webmaster Tools
 - [ ] Verify Organization schema with Google's Rich Results test
 

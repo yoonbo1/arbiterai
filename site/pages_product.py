@@ -55,7 +55,7 @@ PRODUCT = f"""
     <div class="grid-2">
       <div>
 <pre><code>POST /v1/documents
-Authorization: Bearer arb_live_…
+Authorization: Bearer hipaa_live_…
 Idempotency-Key: intake-2026-09-02-0042
 
 {{ "patient_external_id": "MRN-48213",
@@ -66,7 +66,7 @@ Idempotency-Key: intake-2026-09-02-0042
       </div>
       <div>
 <pre><code>POST /v1/queries
-Authorization: Bearer arb_live_…
+Authorization: Bearer hipaa_live_…
 
 {{ "patient_external_id": "MRN-48213",
   "question": "Which medications were discontinued at discharge and why?" }}

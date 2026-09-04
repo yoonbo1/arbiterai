@@ -35,7 +35,7 @@ TODO.md       What is still required before real PHI (derived from platform/docs
 | `build.py` | Wraps each page body in the shared shell (header, nav, footer, meta, JSON-LD) and writes `public/`, `sitemap.xml`, `robots.txt`. |
 | `pages.py`, `pages_home.py`, `pages_product.py` | Page bodies as HTML strings: home, product, security, pricing, docs, about, contact, privacy, terms, 404. |
 | `assets/` | `styles.css` (ink / frost / brass palette), `main.js` (nav toggle, ledger animation, form handling), `logo.svg`, `favicon.svg`, `og-image.png`. |
-| `netlify.toml`, `vercel.json`, `_headers` | Hosting config and security headers (CSP, HSTS, frame-ancestors none). |
+| `wsgi.py`, `Procfile`, `bin/post_compile` | Heroku deployment: gunicorn + WhiteNoise, security headers (CSP, HSTS, frame-ancestors none), the demo-form handler, and the build hook that generates `public/`. |
 
 `site/public/` is generated and is not committed. Run `make site` (or `python3 site/build.py` from `site/`).
 

@@ -104,23 +104,24 @@ DOCS = """
 <section class="on-white">
   <div class="wrap prose">
     <ol class="steps">
-      <li><h4>Get a credential</h4><p>Your administrator creates credentials in the console, or on on-premises deployments via the admin API. A credential looks like <code>arb_live_…</code>, is shown once, and carries scopes such as <code>ingest</code> and <code>query</code>. Store it in a secrets manager, never in source code.</p></li>
+      <li><h4>Get a credential</h4><p>Your administrator creates credentials in the console, or on on-premises deployments via the admin API. A credential looks like <code>hipaa_live_…</code>, is shown once, and carries scopes such as <code>ingest</code> and <code>query</code>. Store it in a secrets manager, never in source code.</p></li>
       <li><h4>Submit a document</h4>
-<pre><code>curl -X POST https://api.arbiterai.tech/v1/documents \\
+<pre><code>curl -X POST https://&lt;your-deployment&gt;/v1/documents \\
   -H "Authorization: Bearer $ARBITER_KEY" \\
   -H "Idempotency-Key: demo-0001" \\
   -H "Content-Type: application/json" \\
   -d '{"patient_external_id":"DEMO-001","doc_type":"discharge_summary",
        "storage_uri":"s3://your-bucket/demo/dc-summary.pdf"}'</code></pre>
+<p>Replace <code>&lt;your-deployment&gt;</code> with the hostname of your Arbiter AI deployment; there is no shared public API.</p>
 <p>The response is <code>202 Accepted</code> with a <code>job_id</code>. Ingestion is asynchronous; poll the job or configure a webhook.</p></li>
       <li><h4>Ask a question</h4>
-<pre><code>curl -X POST https://api.arbiterai.tech/v1/queries \\
+<pre><code>curl -X POST https://&lt;your-deployment&gt;/v1/queries \\
   -H "Authorization: Bearer $ARBITER_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"patient_external_id":"DEMO-001",
        "question":"What was the most recent HbA1c and when was it drawn?"}'</code></pre></li>
       <li><h4>Read the result</h4>
-<pre><code>curl https://api.arbiterai.tech/v1/jobs/$JOB_ID -H "Authorization: Bearer $ARBITER_KEY"
+<pre><code>curl https://&lt;your-deployment&gt;/v1/jobs/$JOB_ID -H "Authorization: Bearer $ARBITER_KEY"
 
 {"status":"done",
  "result":{"answer":"The most recent HbA1c was 7.4%, drawn on the day of admission [3].",
@@ -200,12 +201,13 @@ CONTACT = """
     <div>
       <form data-demo-form data-ajax name="demo" method="POST" action="/submit">
         <p style="display:none"><label>Leave blank <input name="company-site"></label></p>
+        <p class="form-note">Fields marked <span class="req">*</span> are required.</p>
         <div class="form-2">
-          <label>Full name<input name="name" required autocomplete="name"></label>
-          <label>Work email<input name="email" type="email" required autocomplete="email"></label>
+          <label><span>Full name <span class="req" aria-hidden="true">*</span></span><input name="name" required autocomplete="name"></label>
+          <label><span>Work email <span class="req" aria-hidden="true">*</span></span><input name="email" type="email" required autocomplete="email"></label>
         </div>
         <div class="form-2">
-          <label>Organization<input name="org" required autocomplete="organization"></label>
+          <label><span>Organization <span class="req" aria-hidden="true">*</span></span><input name="org" required autocomplete="organization"></label>
           <label>Role<input name="role" placeholder="e.g. CTO, Compliance Officer"></label>
         </div>
         <label>What are you interested in?
@@ -219,7 +221,7 @@ CONTACT = """
             <select name="hosting"><option>No preference</option><option>Dedicated cloud, US</option><option>Dedicated cloud, other region</option><option>On-premises only</option></select></label>
         </div>
         <label>Anything else<textarea name="message" placeholder="Document types, systems you use, timelines. No PHI please."></textarea></label>
-        <label style="grid-template-columns:auto 1fr;align-items:start;gap:10px;font-weight:400"><input type="checkbox" name="consent" required style="width:auto;margin-top:4px"><span class="small">I agree to be contacted about my request and have read the <a href="/privacy.html">privacy policy</a>.</span></label>
+        <label class="consent"><input type="checkbox" name="consent" required><span class="small">I agree to be contacted about my request and have read the <a href="/privacy.html">privacy policy</a>. <span class="req" aria-hidden="true">*</span></span></label>
         <div><button class="btn btn-primary btn-lg" type="submit">Request a demo</button></div>
       </form>
       <div class="form-ok"><strong>Thank you.</strong> We have your request and will reply within one business day.</div>

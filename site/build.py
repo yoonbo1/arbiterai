@@ -23,8 +23,15 @@ SHELL = """<!doctype html>
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{desc}">
 <meta property="og:url" content="{site}/{path}">
+<meta property="og:site_name" content="Arbiter AI">
 <meta property="og:image" content="{site}/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Arbiter AI: private, verified AI for clinical documents">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:description" content="{desc}">
+<meta name="twitter:image" content="{site}/assets/og-image.png">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -59,7 +66,7 @@ SHELL = """<!doctype html>
       <div><h4>Legal</h4><a href="/privacy.html">Privacy policy</a><a href="/terms.html">Terms of service</a><a href="/security.html#baa">Business associate agreement</a></div>
     </div>
     <div class="foot-bottom">
-      <span>&copy; <span data-year></span> Arbiter AI. All rights reserved.</span>
+      <span>&copy; <span data-year>{year}</span> Arbiter AI. All rights reserved.</span>
       <span>Arbiter AI is a software vendor and does not provide medical advice or make clinical decisions.</span>
     </div>
   </div>
@@ -77,7 +84,8 @@ def render(path: str, title: str, desc: str, body: str) -> str:
     links = "".join(
         f'<a href="/{href}"{" aria-current=\"page\"" if href == path else ""}>{label}</a>' for label, href in NAV)
     return SHELL.format(title=title, desc=desc, site=SITE, path=("" if path == "index.html" else path),
-                        logo=LOGO, logo_light=LOGO_LIGHT, navlinks=links, body=body)
+                        logo=LOGO, logo_light=LOGO_LIGHT, navlinks=links, body=body,
+                        year=datetime.date.today().year)
 
 
 def main():
@@ -93,9 +101,6 @@ def main():
                    for p, *_ in PAGES if p not in ("404.html",))
     (OUT / "sitemap.xml").write_text(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>')
     (OUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {SITE}/sitemap.xml\n")
-    for extra in ("netlify.toml", "_headers"):
-        if Path(extra).exists():
-            shutil.copy(extra, OUT / extra)
     print(f"built {len(PAGES)} pages into {OUT}/")
 
 
