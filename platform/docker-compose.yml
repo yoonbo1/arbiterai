@@ -23,6 +23,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
       - ./db/02_app_role.sh:/docker-entrypoint-initdb.d/02_app_role.sh:ro
+      - ./db/03_apply_migrations.sh:/docker-entrypoint-initdb.d/03_apply_migrations.sh:ro
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
     # Localhost only. PG_HOST_PORT lets a dev box that already runs its own Postgres on 5432
     # (e.g. Homebrew) publish this one elsewhere; the host-side DATABASE_URL for eval/ uses it.
     ports: ["127.0.0.1:${PG_HOST_PORT:-5432}:5432"]

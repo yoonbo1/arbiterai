@@ -3,6 +3,7 @@
 #   make serve-site  serve it locally with gunicorn (same stack as Heroku)
 #   make up     start postgres, redis, embeddings, gateway, worker (no GPU services)
 #   make down   stop the stack (keeps volumes; `make down-v` wipes them)
+#   make migrate apply platform/db/migrations/*.sql to the running database
 #   make synth  generate synthetic documents with injected fake PHI (N=20 by default)
 #   make eval   run the 100-request eval harness against the local stack
 #   make test   run pytest for gateway/auth.py, worker/deid.py, worker/retrieval.py
@@ -21,7 +22,7 @@ PYTHON312 ?= python3.12
 N         ?= 20
 COMPOSE   := docker compose --project-directory $(PLATFORM)
 
-.PHONY: help site serve-site deploy-site venv up down down-v ps logs synth bootstrap eval test llm clean
+.PHONY: help site serve-site deploy-site venv up down down-v ps logs migrate synth bootstrap eval test llm clean
 
 help:
 	@grep -E '^#   make' $(MAKEFILE_LIST) | sed 's/^#   //'
@@ -67,11 +68,10 @@ ps:
 logs:
 	$(COMPOSE) logs -f --tail=100 gateway worker
 
-# Local LLM on Apple Silicon (no NVIDIA GPU): Ollama on the host, reachable from
-# the containers at http://host.docker.internal:11434/v1. Dev only: binding to
-# 0.0.0.0 exposes the port on your LAN.
-llm:
-	OLLAMA_HOST=0.0.0.0:11434 ollama serve
+# Apply platform/db/migrations/*.sql to the running Postgres. Idempotent: the same script runs at
+# first init (db/03_apply_migrations.sh), and records applied files in schema_migrations.
+migrate:
+	$(COMPOSE) exec -T postgres bash /docker-entrypoint-initdb.d/03_apply_migrations.sh
 
 # ---------------------------------------------------------------- data + eval
 synth: venv

@@ -18,6 +18,18 @@ DX = ["type 2 diabetes mellitus", "hypertension", "COPD", "atrial fibrillation",
       "community-acquired pneumonia", "major depressive disorder", "osteoarthritis"]
 MEDS = ["metformin 500 mg BID", "lisinopril 10 mg daily", "atorvastatin 40 mg nightly",
         "apixaban 5 mg BID", "albuterol PRN", "sertraline 50 mg daily"]
+# Structured views of MEDS for extraction gold: name, dose, frequency.
+MED_PARTS = {"metformin 500 mg BID": ("metformin", "500 mg", "BID"),
+             "lisinopril 10 mg daily": ("lisinopril", "10 mg", "daily"),
+             "atorvastatin 40 mg nightly": ("atorvastatin", "40 mg", "nightly"),
+             "apixaban 5 mg BID": ("apixaban", "5 mg", "BID"),
+             "albuterol PRN": ("albuterol", None, "PRN"),
+             "sertraline 50 mg daily": ("sertraline", "50 mg", "daily")}
+# Negated findings, family history, allergies: the extraction eval must NOT turn these into
+# present problems (assertion status is the whole point of clinical NLP).
+NEGATED = ["pneumonia", "chest pain", "shortness of breath", "fever", "syncope"]
+FAMILY = ["coronary artery disease", "breast cancer", "stroke", "type 2 diabetes mellitus"]
+ALLERGIES = [("penicillin", "rash"), ("sulfa", "hives"), ("NKDA", None), ("codeine", "nausea")]
 
 
 def record(i, synth=None):
@@ -30,6 +42,9 @@ def record(i, synth=None):
         "visit_date": fake.date_this_year().isoformat(),
         "dx": random.sample(DX, 2), "meds": random.sample(MEDS, 3),
         "a1c": round(random.uniform(5.4, 9.8), 1), "bp": f"{random.randint(110,165)}/{random.randint(65,98)}",
+        "ldl": random.randint(70, 190),
+        "negated": random.sample(NEGATED, 2), "family": random.choice(FAMILY),
+        "allergy": random.choice(ALLERGIES),
     }
 
 
@@ -42,10 +57,15 @@ def write_pdf(rec, path):
     line(f"Phone: {rec['phone']}    Address: {rec['address']}")
     line(f"Attending: {rec['physician']}    Date of service: {rec['visit_date']}", 24)
     line("Diagnoses", 16, True); [line(f"  - {d}") for d in rec["dx"]]
+    neg = rec["negated"]
+    line(f"  - No evidence of {neg[0]}. Denies {neg[1]}.")
     line("Medications", 16, True); [line(f"  - {m}") for m in rec["meds"]]
-    line("Vitals and labs", 16, True); line(f"  BP {rec['bp']}   HbA1c {rec['a1c']}%")
+    al, reaction = rec["allergy"]
+    line("Allergies", 16, True); line(f"  {al}" + (f" ({reaction})" if reaction else ""))
+    line("Vitals and labs", 16, True); line(f"  BP {rec['bp']}   HbA1c {rec['a1c']}%   LDL {rec['ldl']} mg/dL")
     line("Plan", 16, True)
     line(f"  Follow up with {rec['physician']} in 2 weeks. Continue current medications. Low-sodium diet.")
+    line(f"  Family history of {rec['family']}.")
     c.showPage(); c.save()
 
 
@@ -74,9 +94,22 @@ def main():
         clean = out / "clean" / f"{rec['patient_external_id']}.pdf"; write_pdf(rec, clean)
         if i % 2:  # half the corpus goes through the OCR/VLM path
             scan_it(clean, out / "scan" / clean.name)
+        al, reaction = rec["allergy"]
         manifest.append({**rec, "injected_phi": [rec["name"], rec["dob"], rec["mrn"], rec["phone"], rec["address"], rec["physician"]],
                          "gold_qa": [{"q": "What is the patient's most recent HbA1c?", "a": f"{rec['a1c']}%"},
-                                     {"q": "List the discharge medications.", "a": "; ".join(rec["meds"])}]})
+                                     {"q": "List the discharge medications.", "a": "; ".join(rec["meds"])}],
+                         # Gold for the extraction eval (clinical_facts). Assertions matter: the two
+                         # negated findings and the family-history condition must not appear as present.
+                         "gold_facts": {
+                             "problems_present": [d.lower() for d in rec["dx"]],
+                             "problems_absent": [n.lower() for n in rec["negated"]],
+                             "problems_family": [rec["family"].lower()],
+                             "medications": [{"name": MED_PARTS[m][0], "dose": MED_PARTS[m][1], "frequency": MED_PARTS[m][2]} for m in rec["meds"]],
+                             "labs": [{"test": "hba1c", "value": rec["a1c"], "unit": "%"},
+                                      {"test": "ldl", "value": rec["ldl"], "unit": "mg/dL"}],
+                             "vitals": [{"test": "bp", "value": rec["bp"]}],
+                             "allergies": [] if al == "NKDA" else [{"substance": al.lower(), "reaction": reaction}],
+                         }})
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
     print(f"wrote {a.n} records to {out}")
 
