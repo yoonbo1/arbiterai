@@ -11,7 +11,7 @@ import os, signal, socket, time, traceback
 import redis
 from psycopg.types.json import Jsonb
 
-from . import graph, store
+from . import annotate, graph, store
 
 STREAM, GROUP = "jobs", "workers"
 CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
@@ -188,8 +188,11 @@ def main():
     ingest_app = graph.build_ingest().compile(checkpointer=saver)
     query_app = graph.build_query().compile(checkpointer=saver)
     store.get_pool().wait(timeout=60)      # fail fast if Postgres is unreachable
+    if (os.environ.get("ANNOTATE") or "1").strip() == "1":
+        annotate.load_models()             # ~1 GB of models; load once here, not inside the first job
     _log(f"ready (checkpointer={os.environ.get('CHECKPOINTER') or 'none'}, "
-         f"max_deliveries={MAX_DELIVERIES}, claim_idle_ms={CLAIM_IDLE_MS})")
+         f"max_deliveries={MAX_DELIVERIES}, claim_idle_ms={CLAIM_IDLE_MS}, "
+         f"annotate={os.environ.get('ANNOTATE') or '1'}, annotate_llm={os.environ.get('ANNOTATE_LLM') or '0'})")
     while not _stop:
         try:
             batch = _claim_stalled(r)

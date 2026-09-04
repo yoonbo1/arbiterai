@@ -1,6 +1,6 @@
 """Model calls via OpenAI-compatible endpoints (vLLM on a GPU box, Ollama on Apple Silicon).
 Small tier by default, large tier only on escalation. Endpoints are local or BAA-covered."""
-import os, re
+import json, os, re
 
 import httpx
 
@@ -74,6 +74,28 @@ def faithfulness_score(answer_text: str, chunks: list[dict]) -> tuple[float, int
     if v > 1.0 and out.strip().endswith("%"):
         v /= 100.0
     return max(0.0, min(1.0, v)), used
+
+
+_FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
+
+
+def extract_json(tier: str, system: str, user: str, schema: dict, max_tokens: int = 1500) -> tuple[dict | None, int]:
+    """Structured extraction with an OpenAI-compatible json_schema response_format (vLLM and Ollama
+    both honour it). Returns (parsed object or None, tokens_used). The caller validates content;
+    this only guarantees JSON shape, never truth."""
+    url, model = TIERS[tier]
+    r = httpx.post(f"{url}/chat/completions", timeout=TIMEOUT, json={
+        "model": model, "temperature": 0, "max_tokens": max_tokens,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "response_format": {"type": "json_schema", "json_schema": schema}})
+    r.raise_for_status()
+    j = r.json()
+    content = (j["choices"][0]["message"].get("content") or "").strip()
+    try:
+        obj = json.loads(_FENCE.sub("", content))
+    except ValueError:
+        obj = None
+    return (obj if isinstance(obj, dict) else None), total_tokens(j)
 
 
 def cost_cents(usage: dict) -> float:

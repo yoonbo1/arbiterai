@@ -392,3 +392,44 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   software), care gaps, RADV packets, cohort queries, suspecting last and only with
   counsel. Includes the licensing table for the code sets and the human-in-the-loop
   guardrails that keep this a documentation product.
+- **`worker/annotate.py` (new), wired into the ingest graph after de-identification.**
+  Three layers, cheapest first: regex rules for labs, vitals, allergies, medication lines,
+  diagnosis lists, family-history phrases and follow-up; Med7 and bc5cdr named-entity
+  models merged by character offset; medspacy ConText for assertion, with leading negation
+  cues trimmed from NER spans so "Denies chest pain" is negated rather than stored. The
+  sectionizer gained newline-anchored rules for bare headers, and the allergy section no
+  longer marks everything after it as hypothetical. Placeholder tokens are single tokens
+  and never become facts. PyRuSH's token-level logging is disabled at import so
+  de-identified text never reaches container logs. `ANNOTATE=0` bypasses the node.
+- **Every fact carries a citation.** `chunks` gained page-relative character offsets
+  (`db/migrations/002_chunk_offsets.sql`); each fact links to the chunk with the largest
+  span overlap, so the existing `[chunk_id]` citation and validation gate work unchanged.
+  254 of 254 facts in the synthetic corpus have a chunk. Re-ingest replaces a document's
+  facts along with its chunks and PHI tokens.
+- **`GET /v1/patients/{external_id}/facts`** on the gateway (scope `query`, row-level
+  security, `active=true` hides absent, family, conditional and possible assertions),
+  audited as `facts.read`. This is the evidence-packet primitive from the roadmap.
+- **Optional LLM attribute filler** (`ANNOTATE_LLM=0` by default): schema-constrained
+  extraction over section bodies, every span checked verbatim against the text and
+  through the PHI leak check, used only to fill attributes the other layers missed.
+  Live-tested once: 32 seconds per page on this machine and it added nothing on the
+  synthetic note, hence off.
+- **Worker image** is a two-stage build (a builder compiles the four packages with no
+  arm64 wheels; the runtime installs offline from those wheels), plus the bc5cdr config
+  patch that spaCy 3.8.16 needs. 2.65 GB to 3.15 GB. Annotation measured at a median of
+  36 ms per page inside the container.
+- **`worker/deid.py`: bare five-digit numbers need address context** (ZIP pattern score
+  0.6 to 0.35), because `WBC 11000` was being scrubbed as a ZIP code.
+- **Tests: 122 passed, 2 skipped, 2 xfailed.** 57 new tests run the real models on the
+  synthetic text, clean and OCR variants: assertion classes, medication attributes, lab
+  values, header variants, placeholder safety, silent logging, offsets, the LLM merge with
+  stubbed HTTP; 5 endpoint tests with a fake pool.
+- **Extraction eval, 20 documents, 254 facts:** problems F1 1.00 with assertion required,
+  medications 0.98 (name, dose and frequency), labs 0.99, vitals 1.00, allergies 1.00.
+  Every miss is explained: one Tesseract misread (`fisinopril`), one lab name scrubbed by
+  the de-identifier on an OCR page (`HbAic` read as a name). Zero negated or family
+  conditions stored as present once the scorer's own artifact is discounted.
+- **QA eval on the regenerated corpus:** accuracy 0.95, zero cross-patient leaks, zero
+  validation failures, de-id recall 0.992. The one survivor is an MRN whose `MRN:` label
+  Tesseract read as `MAN:`, so the label-anchored recognizer did not fire. A pre-existing
+  OCR gap surfaced by new random identifiers, now in `TODO.md`.

@@ -7,7 +7,8 @@
 #   make synth  generate synthetic documents with injected fake PHI (N=20 by default)
 #   make eval   run the 100-request eval harness against the local stack
 #   make eval-extraction  score extracted clinical facts against the synthetic gold
-#   make test   run pytest for gateway/auth.py, worker/deid.py, worker/retrieval.py
+#   make test   run pytest for gateway/auth.py, worker/deid.py, worker/retrieval.py, worker/annotate.py
+#   make venv-clinical  add medspacy + the Med7/bc5cdr NER models to .venv (tests/test_annotate.py)
 #
 # Host-side Python comes from ./.venv (Python 3.12). Create it with `make venv`.
 
@@ -23,7 +24,7 @@ PYTHON312 ?= python3.12
 N         ?= 20
 COMPOSE   := docker compose --project-directory $(PLATFORM)
 
-.PHONY: help site serve-site deploy-site venv up down down-v ps logs migrate synth bootstrap eval eval-extraction test llm clean
+.PHONY: help site serve-site deploy-site venv venv-clinical up down down-v ps logs migrate synth bootstrap eval eval-extraction test llm clean
 
 help:
 	@grep -E '^#   make' $(MAKEFILE_LIST) | sed 's/^#   //'
@@ -48,6 +49,19 @@ $(VENV)/bin/python:
 	$(VENV)/bin/pip install --upgrade pip
 	$(VENV)/bin/pip install -r $(PLATFORM)/scripts/requirements.txt -r $(PLATFORM)/requirements-dev.txt
 	$(VENV)/bin/python -m spacy download en_core_web_sm
+
+# Clinical NLP layer for tests/test_annotate.py: medspacy (compiles PyRuSH & co. locally), the two
+# NER model wheels (--no-deps: bc5cdr's metadata pins spacy<3.8), and the config patch bc5cdr needs
+# on spaCy 3.8. Mirrors worker/Dockerfile. ~450 MB download.
+MED7_WHL   := https://huggingface.co/kormilitzin/en_core_med7_lg/resolve/main/en_core_med7_lg-1.1.0-py3-none-any.whl
+BC5CDR_SRC := https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_ner_bc5cdr_md-0.5.4.tar.gz
+venv-clinical: venv
+	$(VENV)/bin/pip install -r $(PLATFORM)/worker/requirements-clinical.txt
+	$(VENV)/bin/pip install --no-deps $(MED7_WHL) $(BC5CDR_SRC)
+	cfg="$$($(PY) -c 'import en_ner_bc5cdr_md,os;print(os.path.dirname(en_ner_bc5cdr_md.__file__))')/en_ner_bc5cdr_md-0.5.4/config.cfg"; \
+	  sed -i.bak -e 's/^include_static_vectors = "True"/include_static_vectors = true/' \
+	             -e 's/^include_static_vectors = "False"/include_static_vectors = false/' "$$cfg" && rm -f "$$cfg.bak"
+	$(PY) -c "import spacy; spacy.load('en_ner_bc5cdr_md', exclude=['tagger','attribute_ruler','lemmatizer','parser']); spacy.load('en_core_med7_lg'); print('clinical models ok')"
 
 # ---------------------------------------------------------------- stack
 $(PLATFORM)/.env:

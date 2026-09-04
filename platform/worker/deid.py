@@ -97,7 +97,10 @@ def _address_recognizer() -> PatternRecognizer:
                              patterns=[Pattern("address_labelled", labelled, 0.85),
                                        Pattern("street_line", street, 0.6),
                                        Pattern("city_state_zip", city_state_zip, 0.6),
-                                       Pattern("us_zip", r"\b\d{5}(?:-\d{4})?\b", 0.6)],
+                                       # A bare 5-digit run is a lab value at least as often as a ZIP
+                                       # (WBC 11000, a platelet count); 0.35 alone is below the 0.5 threshold
+                                       # and only the address context words above lift it.
+                                       Pattern("us_zip", r"\b\d{5}(?:-\d{4})?\b", 0.35)],
                              context=["address", "street", "zip", "apt", "suite", "resides", "lives at"])
 
 

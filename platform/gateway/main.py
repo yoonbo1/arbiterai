@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 import redis.asyncio as aioredis
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -112,6 +112,44 @@ async def job_status(job_id: str, request: Request, p=Depends(principal)):
     if not row:
         raise HTTPException(404, "job not found")   # RLS makes other tenants' jobs invisible
     return {"job_id": job_id, "status": row["status"], "result": row["result"], "finished_at": row["finished_at"]}
+
+
+FACT_KINDS = ("problem", "medication", "lab", "vital", "procedure", "allergy", "immunization", "referral", "plan", "other")
+INACTIVE_ASSERTIONS = ("absent", "family", "conditional", "possible")
+
+
+@app.get("/v1/patients/{external_id}/facts")
+async def patient_facts(external_id: str, request: Request, kind: str | None = Query(None),
+                        active: bool = Query(True), limit: int = Query(500, ge=1, le=5000),
+                        p=Depends(require("query"))):
+    """Structured, de-identified clinical facts for one patient (the evidence-packet primitive).
+    Text is stored de-identified (<PERSON_1> placeholders); nothing is re-identified here.
+    active=true (default) hides facts asserted absent, family-history, conditional or possible."""
+    if kind is not None and kind not in FACT_KINDS:
+        raise HTTPException(422, f"kind must be one of {', '.join(FACT_KINDS)}")
+    sql = ("SELECT id, document_id, chunk_id, page, section, kind, text, normalized, attributes, assertion, "
+           "date_token, confidence, extractor FROM clinical_facts WHERE patient_id=$1")
+    params: list = []
+    if kind is not None:
+        params.append(kind); sql += f" AND kind=${len(params) + 1}"
+    if active:
+        params.append(list(INACTIVE_ASSERTIONS)); sql += f" AND NOT (assertion = ANY(${len(params) + 1}::text[]))"
+    params.append(limit); sql += f" ORDER BY page, span_start, id LIMIT ${len(params) + 1}"
+    async with request.app.state.pool.acquire() as con, con.transaction():
+        await con.execute("SELECT set_config('app.tenant_id', $1, true)", p.tenant_id)
+        pid = await con.fetchval("SELECT id FROM patients WHERE external_id=$1", external_id)
+        if not pid:
+            raise HTTPException(404, "patient not found")    # RLS: other tenants' patients are invisible
+        rows = await con.fetch(sql, pid, *params)
+        await con.execute(
+            "INSERT INTO audit_log (tenant_id, api_key_id, actor, action, patient_id, detail) VALUES ($1,$2,$3,$4,$5,$6)",
+            p.tenant_id, p.api_key_id, p.key_prefix, "facts.read", pid,
+            {"count": len(rows), "kind": kind, "active": active, "limit": limit})
+    return {"patient_external_id": external_id, "count": len(rows), "active_only": active, "facts": [
+        {"id": r["id"], "document_id": str(r["document_id"]), "chunk_id": r["chunk_id"], "page": r["page"],
+         "section": r["section"], "kind": r["kind"], "text": r["text"], "normalized": r["normalized"],
+         "attributes": r["attributes"] or {}, "assertion": r["assertion"], "date_token": r["date_token"],
+         "confidence": float(r["confidence"]), "extractor": r["extractor"]} for r in rows]}
 
 
 # ---- Admin: tenant & key management (protect behind VPN/IP allowlist + MFA in prod) ----

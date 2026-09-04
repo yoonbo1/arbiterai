@@ -1,6 +1,6 @@
 """LangGraph pipelines. Two graphs share one state schema:
 
-  ingest:  load -> route_pages -> extract(text|ocr|vlm) -> deidentify -> chunk_embed -> audit
+  ingest:  load -> route_pages -> extract(text|ocr|vlm) -> deidentify -> annotate -> chunk_embed -> audit
   query:   deidentify_q -> retrieve -> generate(small) -> validate -> [escalate(large) -> validate] -> reidentify -> audit
 
 Invariant enforced in code: nothing leaves this process to a model endpoint unless
@@ -12,11 +12,12 @@ persistent checkpointer must not be used with real data until that state is prot
 """
 from __future__ import annotations
 
+import os, time
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from . import deid, extract, llm, retrieval, store
+from . import annotate, deid, extract, llm, retrieval, store
 
 
 class State(TypedDict, total=False):
@@ -32,6 +33,7 @@ class State(TypedDict, total=False):
     document_id: str
     pages: list[extract.Page]
     raw_text: list[str]
+    facts: list[list[annotate.Fact]]   # per page, de-identified spans only
     # query
     question: str
     question_deid: str
@@ -90,15 +92,33 @@ def deidentify(state: State) -> State:
     return {"raw_text": clean, "phi_map": phi_map, "deidentified": True}
 
 
+def annotate_pages(state: State) -> State:
+    """Structured clinical facts from the de-identified pages (worker/annotate.py). ANNOTATE=0
+    short-circuits to empty lists so the rest of the pipeline keeps working without the models."""
+    assert state["deidentified"], "refusing to annotate non-de-identified text"
+    if (os.environ.get("ANNOTATE") or "1").strip() != "1":
+        return {"facts": [[] for _ in state["raw_text"]]}
+    usage = dict(state.get("usage", {}))
+    t0 = time.time()
+    facts = annotate.annotate_pages(state["raw_text"], usage=usage)
+    n_pages = max(1, len(facts))
+    print(f"[worker] annotate {state['job_id']}: {len(facts)} page(s), {sum(len(f) for f in facts)} facts, "
+          f"{(time.time() - t0) * 1000 / n_pages:.0f} ms/page", flush=True)       # counts only, never text
+    return {"facts": facts, "usage": usage}
+
+
 def chunk_embed(state: State) -> State:
     assert state["deidentified"], "refusing to embed non-de-identified text"
+    facts = state.get("facts") or [[] for _ in state["pages"]]
     n = store.index_document(
         tenant_id=state["tenant_id"], patient_id=state["patient_id"],
         document_id=state["document_id"], pages=state["pages"], texts=state["raw_text"],
-        phi_map=state["phi_map"],
+        phi_map=state["phi_map"], facts=facts,
     )
     return {"validation": {"chunks_indexed": n, "pages": len(state["pages"]),
-                           "vlm_wanted_pages": sum(1 for p in state["pages"] if p.vlm_wanted)}}
+                           "vlm_wanted_pages": sum(1 for p in state["pages"] if p.vlm_wanted),
+                           "facts": annotate.counts_by_kind(facts),
+                           "facts_total": sum(len(f) for f in facts)}}
 
 
 # ----------------------------------------------------------------- query nodes
@@ -175,11 +195,13 @@ def audit(state: State) -> State:
 def build_ingest() -> StateGraph:
     g = StateGraph(State)
     for name, fn in [("load", load), ("route_pages", route_pages), ("extract", extract_pages),
-                     ("deidentify", deidentify), ("chunk_embed", chunk_embed), ("audit", audit)]:
+                     ("deidentify", deidentify), ("annotate", annotate_pages),
+                     ("chunk_embed", chunk_embed), ("audit", audit)]:
         g.add_node(name, fn)
     g.set_entry_point("load")
     g.add_edge("load", "route_pages"); g.add_edge("route_pages", "extract")
-    g.add_edge("extract", "deidentify"); g.add_edge("deidentify", "chunk_embed")
+    g.add_edge("extract", "deidentify"); g.add_edge("deidentify", "annotate")
+    g.add_edge("annotate", "chunk_embed")
     g.add_edge("chunk_embed", "audit"); g.add_edge("audit", END)
     return g
 

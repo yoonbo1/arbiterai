@@ -3,3 +3,10 @@
 # already in the venv (presidio-analyzer, spacy + en_core_web_sm, rank-bm25, psycopg, redis).
 pytest==9.1.1
 pytest-asyncio==1.4.0
+# tests/test_gateway_facts.py imports gateway/main.py (FastAPI app + asyncpg types); same pins as gateway/.
+fastapi==0.115.14
+asyncpg==0.29.0
+# Clinical NLP (tests/test_annotate.py runs the real models; skipped when they are missing):
+#   make venv-clinical
+# which installs worker/requirements-clinical.txt (medspacy 1.3.1, compiled locally), the two NER
+# model wheels with --no-deps, and patches en_ner_bc5cdr_md's config.cfg for spaCy 3.8.

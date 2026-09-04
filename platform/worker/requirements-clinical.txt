@@ -1,0 +1,11 @@
+# Clinical NLP layer for worker/annotate.py. Installed on top of requirements.txt (spacy 3.8.16,
+# numpy 2). medspacy pulls PyRuSH, pysbd, medspacy_quickumls, nltk, loguru; PyRuSH, quicksectx,
+# pysimstring and medspacy_unqlite have no linux/aarch64 wheels, so the Dockerfile builds them in a
+# builder stage. Do NOT add scispacy (its numpy<2 pin makes pip pick an ancient release).
+medspacy==1.3.1
+# The two NER models are installed separately with --no-deps (see Dockerfile / `make venv-clinical`):
+#   en_core_med7_lg 1.1.0 (MIT, built for spaCy 3.8):
+#     https://huggingface.co/kormilitzin/en_core_med7_lg/resolve/main/en_core_med7_lg-1.1.0-py3-none-any.whl
+#   en_ner_bc5cdr_md 0.5.4 (Apache-2.0; its metadata pins spacy<3.8, hence --no-deps, and its
+#   config.cfg needs include_static_vectors = "True" -> true before it loads on spaCy 3.8):
+#     https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_ner_bc5cdr_md-0.5.4.tar.gz
