@@ -159,6 +159,41 @@ def _select(results: list[RecognizerResult]) -> list[RecognizerResult]:
     return sorted(merged, key=lambda r: r.start, reverse=True)
 
 
+# Titles and field labels are not identifiers. spaCy tags a bare "Dr" as a PERSON often enough
+# that charts came out as "Attending: <PERSON_2>. <PERSON_1>" with <PERSON_2> = "Dr", and the
+# model then answered "the attending physician is Dr." with the title as the name. A span whose
+# whole text is a title or label is dropped; a PERSON span that starts with a title or ends with
+# a label ("Dr Young", "Joshua Duncan DOB") is trimmed to the name.
+_TITLES = {"dr", "doctor", "mr", "mrs", "ms", "miss", "mx", "prof", "professor", "md", "do", "rn", "np", "pa",
+           "attending", "physician", "provider", "patient", "resident", "nurse"}
+_LABELS = {"dob", "mrn", "ssn", "date", "name", "phone", "address", "plan", "attending", "patient",
+           "physician", "provider", "diagnoses", "medications", "allergies"}
+_WORD_SPLIT = re.compile(r"[\s.,:;]+")
+
+
+def _trim_person(text: str, start: int, end: int) -> tuple[int, int] | None:
+    """Return trimmed [start, end) for a PERSON span, or None to drop it entirely."""
+    words = [w for w in _WORD_SPLIT.split(text[start:end]) if w]
+    if not words:
+        return None
+    lowered = [w.lower() for w in words]
+    if all(w in _TITLES or w in _LABELS for w in lowered):
+        return None
+    # leading titles
+    while lowered and lowered[0] in _TITLES:
+        first = words.pop(0); lowered.pop(0)
+        start = text.index(first, start) + len(first)
+        while start < end and text[start] in " .,:;":
+            start += 1
+    # trailing labels
+    while lowered and lowered[-1] in _LABELS:
+        last = words.pop(); lowered.pop()
+        end = text.rindex(last, start, end)
+        while end > start and text[end - 1] in " .,:;":
+            end -= 1
+    return (start, end) if end > start else None
+
+
 class Scrubber:
     """Replaces PHI spans with reversible tokens. One instance per document so the same value
     maps to the same token on every page (coherence for the model and the phi_map)."""
@@ -181,6 +216,15 @@ class Scrubber:
                 r.start += 1
             while r.end > r.start and text[r.end - 1].isspace():
                 r.end -= 1
+        kept = []
+        for r in results:
+            if r.entity_type == "PERSON":
+                trimmed = _trim_person(text, r.start, r.end)
+                if trimmed is None:
+                    continue
+                r.start, r.end = trimmed
+            kept.append(r)
+        results = kept
         for r in _select(results):
             value = text[r.start:r.end]
             token = self._seen.get(value)

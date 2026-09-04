@@ -18,13 +18,14 @@ def hybrid(*, tenant_id: str, patient_id: str, query: str, k: int = 6, pool: int
     qvec = store.vector_literal(store.embed([query])[0])
     with store.tenant_conn(tenant_id) as con:
         rows = con.execute(
-            """SELECT id, page, section, text, 1 - (embedding <=> %s::vector) AS sim
+            """SELECT id, page, section, text, 1 - (embedding <=> %s::vector) AS sim, document_id
                  FROM chunks WHERE tenant_id=%s AND patient_id=%s
                 ORDER BY embedding <=> %s::vector LIMIT %s""",
             (qvec, tenant_id, patient_id, qvec, pool)).fetchall()
     if not rows:
         return []
-    docs = [{"id": r[0], "page": r[1], "section": r[2], "text": r[3], "sim": float(r[4])} for r in rows]
+    docs = [{"id": r[0], "page": r[1], "section": r[2], "text": r[3], "sim": float(r[4]),
+             "document_id": str(r[5]) if len(r) > 5 and r[5] is not None else None} for r in rows]
     bm25 = BM25Okapi([tokenize(d["text"]) or [""] for d in docs])
     bm = bm25.get_scores(tokenize(query))
     vec_rank = {d["id"]: i for i, d in enumerate(docs)}

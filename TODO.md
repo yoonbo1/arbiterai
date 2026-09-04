@@ -84,8 +84,8 @@ with a compliance officer.
 
 ## Found reviewing the query path (2026-09-03)
 
-- [ ] **Re-identification only covers the question, never the documents.** `reidentify` restores tokens using the map from scrubbing the question. Tokens the model copies out of retrieved chunks (`<PERSON_3>` for the patient, `<PERSON_2>` for the attending) are never looked up in `phi_tokens`, so an answer to "who is the attending physician?" comes back as a placeholder. The encrypted per-document map in `phi_tokens` exists precisely for this and is never read on the query path.
-- [ ] **Token namespaces collide.** Every scrub numbers from `<PERSON_1>`, so the question's `<PERSON_1>` and each document's `<PERSON_1>` are different people with the same label. Demonstrated: question "What did Dr. Patel prescribe?" plus a chunk whose `<PERSON_1>` is Dr. Young produced the answer "Patel was started on metformin", a wrong re-identification. Fix both together: give tokens a per-document namespace (or number them per patient across documents), and have `reidentify` decrypt the cited documents' `phi_tokens` under the tenant key and restore only those, plus the question's own.
+- [x] **Re-identification only covers the question, never the documents.** `reidentify` restores tokens using the map from scrubbing the question. Tokens the model copies out of retrieved chunks (`<PERSON_3>` for the patient, `<PERSON_2>` for the attending) are never looked up in `phi_tokens`, so an answer to "who is the attending physician?" comes back as a placeholder. The encrypted per-document map in `phi_tokens` exists precisely for this and is never read on the query path.
+- [x] **Token namespaces collide.** Every scrub numbers from `<PERSON_1>`, so the question's `<PERSON_1>` and each document's `<PERSON_1>` are different people with the same label. Demonstrated: question "What did Dr. Patel prescribe?" plus a chunk whose `<PERSON_1>` is Dr. Young produced the answer "Patel was started on metformin", a wrong re-identification. Fix both together: give tokens a per-document namespace (or number them per patient across documents), and have `reidentify` decrypt the cited documents' `phi_tokens` under the tenant key and restore only those, plus the question's own.
 - [ ] The output leak check (`contains_phi`) deliberately ignores `DATE_TIME` and `LOCATION`, so a raw date or address in an answer would pass. Dates and geography smaller than a state are Safe Harbor identifiers. Decide whether that is acceptable for the product and document it, or tighten the check.
 
 ## Found by the eval harness (synthetic data, 20 documents)
@@ -107,9 +107,9 @@ with a compliance officer.
 - [ ] **Set `FORM_ENDPOINT` on the Heroku app.** The form now works end to end, but with no endpoint configured the submission is only written to the application log, which is not durable and is a poor place for personal data. Pick a backend (Formspree, Basin, or a Slack/Zapier webhook) and run `heroku config:set FORM_ENDPOINT=... -a arbiterai-site`. No code or CSP change is needed: `wsgi.py` forwards server side.
 - [ ] Counsel must set the governing law and venue in the terms. The placeholder is gone; the clause now defers to the customer's signed agreement, which is honest but leaves website-only disputes unaddressed.
 - [ ] Add real founder and team bios to the About page. The placeholder callout is removed, so that column is now short. Healthcare buyers check who they are buying from.
-- [ ] Product page ledger (`ledger(animate=False)`) renders every row at 45% opacity with empty check marks; mark rows `done` when not animating.
-- [ ] Contrast below WCAG AA: white on brass buttons (3.2:1), kicker `#8F6E2B` on frost (4.3:1), the two badge styles (about 4.1:1).
-- [ ] Stale host configs now that the site runs on Heroku: `netlify.toml`, `vercel.json` and `_headers` are all dead files there (`wsgi.py` applies the headers instead). Either delete them or keep them working: `vercel.json`'s `cleanUrls: true` would 308-redirect every `.html` link, canonical and sitemap URL.
-- [ ] Sticky header: add `html{scroll-padding-top:80px}` so anchors like `#baa` clear it by design rather than by section padding.
-- [ ] Mark required form fields visibly; enlarge the consent checkbox.
-- [ ] Align the docs page's credential prefix (`arb_live_`) and API host (`api.arbiterai.tech`) with the platform (`hipaa_live_`, no public host yet).
+- [x] Product page ledger (`ledger(animate=False)`) renders every row at 45% opacity with empty check marks; mark rows `done` when not animating.
+- [x] Contrast below WCAG AA: white on brass buttons (3.2:1), kicker `#8F6E2B` on frost (4.3:1), the two badge styles (about 4.1:1).
+- [x] Stale host configs now that the site runs on Heroku: `netlify.toml`, `vercel.json` and `_headers` are all dead files there (`wsgi.py` applies the headers instead). Either delete them or keep them working: `vercel.json`'s `cleanUrls: true` would 308-redirect every `.html` link, canonical and sitemap URL.
+- [x] Sticky header: add `html{scroll-padding-top:80px}` so anchors like `#baa` clear it by design rather than by section padding.
+- [x] Mark required form fields visibly; enlarge the consent checkbox.
+- [x] Align the docs page's credential prefix (`arb_live_`) and API host (`api.arbiterai.tech`) with the platform (`hipaa_live_`, no public host yet).

@@ -142,6 +142,19 @@ def index_document(*, tenant_id, patient_id, document_id, pages, texts, phi_map,
     return len(rows)
 
 
+def decrypt_tokens(tenant_id: str, document_id: str, tokens: list[str]) -> dict[str, str]:
+    """Re-identification for the authorized caller: decrypt exactly the requested placeholder
+    tokens of one document. Runs under app.tenant_id so RLS applies, with the tenant's key."""
+    if not tokens or not document_id:
+        return {}
+    with tenant_conn(tenant_id) as con:
+        rows = con.execute(
+            "SELECT token, pgp_sym_decrypt(value_enc, %s) FROM phi_tokens "
+            "WHERE document_id=%s AND token = ANY(%s)",
+            (_tenant_key(tenant_id), document_id, list(tokens))).fetchall()
+    return {t: v for t, v in rows}
+
+
 def _tenant_key(tenant_id: str) -> str:
     # Local dev: derive from env. Prod: fetch per-tenant DEK from KMS/Vault, cached briefly.
     kek = os.environ.get("TENANT_KEK")

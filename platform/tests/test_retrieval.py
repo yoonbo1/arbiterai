@@ -148,7 +148,7 @@ def test_result_shape(fake_db):
     fake_db.rows = ROWS
     out = run(fake_db, "pneumonia", k=2)
     for d in out:
-        assert set(d) == {"id", "page", "section", "text", "sim", "score"}
+        assert set(d) == {"id", "page", "section", "text", "sim", "score", "document_id"}
         assert isinstance(d["sim"], float) and isinstance(d["score"], float)
     assert out[0]["text"] in {r[3] for r in ROWS}
 

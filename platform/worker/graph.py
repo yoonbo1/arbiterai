@@ -17,7 +17,7 @@ from typing import Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from . import annotate, deid, extract, llm, retrieval, store
+from . import annotate, deid, extract, llm, reid, retrieval, store
 
 
 class State(TypedDict, total=False):
@@ -39,6 +39,7 @@ class State(TypedDict, total=False):
     question_deid: str
     max_chunks: int
     chunks: list[dict]
+    token_index: dict[str, tuple[str, str]]   # unified token -> (question | document_id, original)
     answer_deid: str
     answer: str
     # shared
@@ -133,7 +134,10 @@ def retrieve(state: State) -> State:
         tenant_id=state["tenant_id"], patient_id=state["patient_id"],   # hard filters, always
         query=state["question_deid"], k=state.get("max_chunks", 6),
     )
-    return {"chunks": chunks}
+    # One token namespace per query: each document numbers its own placeholders from 1, so
+    # without this the same label could mean different people inside one prompt.
+    chunks, index = reid.unify(state.get("phi_map", {}), chunks)
+    return {"chunks": chunks, "token_index": index}
 
 
 def after_retrieve(state: State) -> Literal["generate", "no_chunks"]:
@@ -173,8 +177,11 @@ def after_validate(state: State) -> Literal["reidentify", "generate", "fail"]:
 
 
 def reidentify(state: State) -> State:
-    # Only the caller's own patient's tokens get swapped back, at the very last step.
-    return {"answer": deid.restore(state["answer_deid"], state["phi_map"])}
+    """Last step, only for the authorized caller, only the tokens the answer uses: question
+    tokens from memory, document tokens decrypted from phi_tokens under the tenant key."""
+    answer, n = reid.restore(state["answer_deid"], state.get("phi_map", {}),
+                             state.get("token_index", {}), state["tenant_id"])
+    return {"answer": answer, "validation": {**state.get("validation", {}), "tokens_restored": n}}
 
 
 def fail(state: State) -> State:

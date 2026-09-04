@@ -300,3 +300,26 @@ def test_calendar_dates_are_still_redacted():
     clean, _ = deid.scrub("DOB: 1985-03-12. Admitted 03/05/2024 and discharged March 9, 2024.")
     for gone in ("1985-03-12", "03/05/2024", "March 9"):
         assert gone not in clean, clean
+
+
+# ---------------------------------------------------------------- titles and labels are not names
+
+def test_bare_title_is_never_a_person_token():
+    clean, phi = deid.scrub("Attending: Dr. Hawkins    Date of service: 2026-02-02")
+    assert "Hawkins" not in clean
+    assert "Attending: Dr. <PERSON_" in clean, clean          # the title survives, the name is the token
+    assert "Dr" not in phi.values() and "Date" not in phi.values()
+    assert all(v.strip() not in ("Dr", "Dr.", "Attending", "Date") for v in phi.values())
+
+
+def test_person_span_is_trimmed_of_leading_title_and_trailing_label():
+    assert deid._trim_person("Patient: Joshua Duncan DOB: 1975", 9, 26) == (9, 22)   # "Joshua Duncan"
+    assert deid._trim_person("Seen by Dr Young today", 8, 16) == (11, 16)          # "Young"
+    assert deid._trim_person("Attending: Dr.", 11, 14) is None                    # nothing left
+    assert deid._trim_person("Plan", 0, 4) is None
+
+
+def test_ocr_style_line_keeps_labels_out_of_the_map():
+    clean, phi = deid.scrub("Patient: Joshua Duncan DOB: 1975-06-15 MAN: 8275367")
+    assert "Joshua Duncan" in phi.values(), phi
+    assert not any(v.endswith("DOB") for v in phi.values()), phi
