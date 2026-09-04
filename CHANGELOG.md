@@ -366,3 +366,29 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   means only `heroku domains:add` is needed if the apex is ever pointed at Heroku.
 - `arbiterai.tech` was removed from the Heroku app again, so certificate management no
   longer reports a permanent validation failure for a domain that does not point there.
+
+## 2026-09-04 — clinical NLP on ingestion, and a product roadmap
+
+- **Research.** Clinical NLP tooling was evaluated by actually installing candidates against
+  the worker's exact pins and running them on the de-identified synthetic note. Adopted:
+  medspacy 1.3.1 (sections, sentence splitting, ConText assertion), en_core_med7_lg 1.1.0
+  (medications with dose, route, frequency), en_ner_bc5cdr_md 0.5.4 (problems), and regex
+  rules for labs, vitals, allergies and follow-up. Rejected for now, with reasons in
+  `platform/docs/FEATURES_ROADMAP.md` appendix A: scispaCy's linker, MedCAT, GLiNER-biomed,
+  OpenMed, Stanza. The 7B model is deterministic and schema-valid but unreliable on
+  assertion and invents units, so it is an optional attribute filler, off by default.
+- **`db/migrations/`** with `03_apply_migrations.sh` (first init) and `make migrate`
+  (existing volumes), recorded in `schema_migrations`. First migration: `clinical_facts`,
+  de-identified structured facts with assertion status, optional codes, a chunk/page
+  citation and confidence, under the same row-level security policy as `chunks`.
+- **Synthetic corpus** now includes two negated findings, a family-history line, an
+  allergy with reaction (or NKDA) and an LDL per document, and the manifest carries
+  `gold_facts`. `eval/run_extraction_eval.py` (`make eval-extraction`) scores precision,
+  recall and F1 per fact kind, with assertion required to match for problems, and reports
+  separately how many negated or family-history conditions were wrongly stored as present.
+- **`platform/docs/FEATURES_ROADMAP.md`.** What to build on the fact table, mapped against
+  Reveleer's public products: evidence packets, MEAT-backed condition validation with the
+  public CMS-HCC crosswalk, HEDIS-style measure evidence (NCQA license required for
+  software), care gaps, RADV packets, cohort queries, suspecting last and only with
+  counsel. Includes the licensing table for the code sets and the human-in-the-loop
+  guardrails that keep this a documentation product.

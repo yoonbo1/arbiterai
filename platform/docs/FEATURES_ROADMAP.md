@@ -247,6 +247,62 @@ All tables carry `tenant_id` and the same row-level-security policy as `chunks`.
 - NCQA on using HEDIS measure specifications: https://www.ncqa.org/hedis/using-hedis-measures/
 - HEDIS 2026 direction, ECDS and digital measures: https://linear.health/blog/hedis-measures-explained
 
-## Appendix A. Extraction stack (verified on this machine)
+## Appendix A. Extraction stack (verified on this machine, 2026-09-04)
 
-_Filled in after the install and smoke tests; see below._
+Every package below was installed in a throwaway environment against the worker's exact
+pins (spaCy 3.8.16, Presidio 2.2.364, numpy 2.4.6) and run on the synthetic discharge
+summary. Timings are single-process CPU on an Apple M4; expect roughly double on a
+typical arm64 server core.
+
+| layer | package | what it contributes | cost per page |
+|---|---|---|---|
+| host | medspacy 1.3.1 | clinical tokenizer, PyRuSH sentence splitter, Sectionizer (140 rules, 23 categories), ConText assertion (negated, historical, family, hypothetical, uncertain) | 32 ms |
+| medications | en_core_med7_lg 1.1.0 (MIT) | DRUG with STRENGTH, DOSAGE, FORM, ROUTE, FREQUENCY, DURATION; author-reported F1 0.88 overall, 0.77 on frequency, 0.67 on duration | 186 ms |
+| problems | en_ner_bc5cdr_md 0.5.4 (Apache-2.0) | DISEASE spans; trained on PubMed abstracts, so expect lower recall on notes | 70 ms |
+| structured values | regex rules | labs with value and unit, vitals, allergies, follow-up | negligible |
+| optional | qwen2.5:7b-instruct via Ollama, JSON-schema constrained | attribute filling and doc-type classification; 25 to 62 s per document on this Mac, so off by default | per document |
+
+Total for the three model layers: about 260 ms per page. Image growth: about 0.7 GB.
+
+What the smoke test showed, verbatim in spirit:
+
+- Assertion works where it matters: "No evidence of pneumonia" and "Denies chest pain"
+  come out negated, "Family history of CAD" comes out family. It fails on "pneumonia
+  ruled out", "chest pain (-)", "? pneumonia" and "FHx CAD" until rules are added, and on
+  OCR-damaged cues ("Denles", "Noevidence").
+- Section detection needs custom rules. The shipped rules are colon-anchored and missed
+  bare headers such as `Diagnoses`, `Medications`, `Plan`, `Vitals and labs`, and common
+  spellings such as `Meds:` and `Problem List`. With newline-anchored rules added, every
+  section of the synthetic note was labelled correctly.
+- The problem model emits over-long spans ("Denies chest pain" as one entity), which
+  hides the negation cue from ConText. Trimming leading cue words before assertion fixes it.
+- The 7B model is deterministic at temperature zero and schema-valid, but on a full page
+  it negated the wrong condition, dropped three negated findings, invented units for
+  labs, and replaced a physician placeholder with the word "clinician". It is an
+  attribute filler validated against the text, not a source of truth for assertion.
+- Placeholders such as `<PERSON_1>` never became entities in any layer once the tokenizer
+  was taught to treat them as single tokens.
+
+Two findings about the existing de-identifier, measured with the production model:
+
+- It scrubs clinical terms that look like names or places: `Foley catheter` became
+  `<PERSON_1> catheter`, `Cushing syndrome` became `<PERSON_1> syndrome`, `Right Upper
+  Lobe` became `Right <LOCATION_1>`, and `WBC 11000` became `WBC <LOCATION_1>` because a
+  bare five-digit number matched the ZIP pattern. The ZIP pattern now needs address
+  context; the eponyms need a protect list before de-identification.
+- It does not scrub hospital and facility names ("Johns Hopkins Hospital", "Mercy General
+  ED"). Facility names are not on the Safe Harbor list, but geography smaller than a state
+  is, and a facility usually implies a city. Decide the policy.
+
+What was deliberately not adopted: scispaCy's entity linker (its numpy pin fights the
+worker's and it needs a compiler, though it works with `--no-deps`); MedCAT (every public
+model pack sits behind a UMLS login); GLiNER-biomed, OpenMed and Stanza (all need PyTorch,
+about a gigabyte, and the zero-shot model missed "pneumonia" at the default threshold).
+They are the next tier once a customer brings a UMLS or SNOMED license or a GPU box.
+
+Evaluation data that would replace the synthetic gold: n2c2 2018 track 2 (medications, 505
+discharge summaries) and i2b2 2010 (concepts and assertions), both under a per-person data
+use agreement through the Harvard DBMI portal; MIMIC-IV notes for sections via PhysioNet
+credentialing. None may be redistributed, and no public corpus of OCR'd clinical pages
+exists, so an in-house set of about a hundred scanned pages with span-level gold is needed
+for the OCR path.

@@ -45,6 +45,16 @@ with a compliance officer.
 - [ ] `api_keys.key_prefix` is the first 12 characters, which is `hipaa_live_` plus one random character. Widen it if audit-log matching by prefix matters.
 - [ ] The `vlm` route, `CHECKPOINTER=postgres`, and the `gpu` compose profile are untested on this machine (no NVIDIA GPU). Verify on a GPU box.
 
+## Found while adding clinical NLP (2026-09-04)
+
+- [ ] **Protect clinical eponyms and anatomy before de-identification.** With the production spaCy model, `Foley catheter`, `Cushing syndrome`, `Right Upper Lobe` and `WBC 11000` were scrubbed as a person, a person, a location and a ZIP code. Build protected character ranges from a lexicon (RxNorm prescribable names followed by a dose, eponym plus `catheter|syndrome|disease|lymphoma|palsy`, anatomy phrases, lab names followed by large integers) and drop Presidio results inside them. Do not use model NER for this; its false positives would become allow-list holes.
+- [ ] **Facility names are not scrubbed** ("Johns Hopkins Hospital", "Mercy General ED"). Decide whether facilities count as geography under your Safe Harbor reading and add an ORG/facility recognizer if so.
+- [ ] **Section and negation rules are colon-anchored and brittle on OCR.** Bare headers need custom rules (added for the common ones); OCR-damaged cues (`Denles`, `Noevidence`) and shorthand (`FHx`, `(-)`, `?`) are missed. Add fuzzy header matching and the shorthand cue rules, and measure on scanned pages.
+- [ ] **Concept normalization is not wired.** `clinical_facts.code` is null. Build an alias index from the public CDC ICD-10-CM files and the NLM RxNorm prescribable subset (both redistributable); LOINC after accepting its license; SNOMED only when a customer brings an affiliate license.
+- [ ] **Structured lookup in the query graph.** Facts are written but the query path still retrieves only text chunks. Add an intent-routed lookup over `clinical_facts` that unions the facts' chunk ids into the retrieval pool and prepends `FACT:` excerpts, so "list the medications" is answered from structured rows with the same citations.
+- [ ] **The LLM extraction layer is off by default** (`ANNOTATE_LLM=0`) because it costs 25 to 60 seconds per document on this machine. Turn it on when the model runs on a GPU, and only as an attribute filler validated against the text.
+- [ ] **A real extraction evaluation** needs n2c2 2018 track 2 and i2b2 2010 under their data use agreements, plus an in-house set of about 100 OCR'd pages with span-level gold. The synthetic numbers are a floor on a corpus that was written to be easy.
+
 ## Found reviewing the query path (2026-09-03)
 
 - [ ] **Re-identification only covers the question, never the documents.** `reidentify` restores tokens using the map from scrubbing the question. Tokens the model copies out of retrieved chunks (`<PERSON_3>` for the patient, `<PERSON_2>` for the attending) are never looked up in `phi_tokens`, so an answer to "who is the attending physician?" comes back as a placeholder. The encrypted per-document map in `phi_tokens` exists precisely for this and is never read on the query path.

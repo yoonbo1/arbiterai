@@ -6,6 +6,7 @@
 #   make migrate apply platform/db/migrations/*.sql to the running database
 #   make synth  generate synthetic documents with injected fake PHI (N=20 by default)
 #   make eval   run the 100-request eval harness against the local stack
+#   make eval-extraction  score extracted clinical facts against the synthetic gold
 #   make test   run pytest for gateway/auth.py, worker/deid.py, worker/retrieval.py
 #
 # Host-side Python comes from ./.venv (Python 3.12). Create it with `make venv`.
@@ -22,7 +23,7 @@ PYTHON312 ?= python3.12
 N         ?= 20
 COMPOSE   := docker compose --project-directory $(PLATFORM)
 
-.PHONY: help site serve-site deploy-site venv up down down-v ps logs migrate synth bootstrap eval test llm clean
+.PHONY: help site serve-site deploy-site venv up down down-v ps logs migrate synth bootstrap eval eval-extraction test llm clean
 
 help:
 	@grep -E '^#   make' $(MAKEFILE_LIST) | sed 's/^#   //'
@@ -86,6 +87,11 @@ LIMIT ?= 20
 eval: venv
 	cd $(PLATFORM) && set -a && . ./.env.dev-tenant && set +a && \
 	  $(PY) eval/run_eval.py --manifest data/synthetic/manifest.json --limit $(LIMIT) $(EVAL_ARGS)
+
+# Score clinical_facts against the manifest's gold_facts (run after ingesting with annotation on).
+eval-extraction: venv
+	cd $(PLATFORM) && set -a && . ./.env.dev-tenant && set +a && \
+	  $(PY) eval/run_extraction_eval.py --manifest data/synthetic/manifest.json --limit $(LIMIT) $(EVAL_ARGS)
 
 # ---------------------------------------------------------------- tests
 test: venv
