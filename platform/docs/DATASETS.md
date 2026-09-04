@@ -60,10 +60,12 @@ use to "the sole purpose of lawful use in scientific research and no other" and 
 nothing about commercial use either way; get a written answer before relying on MIMIC for
 product acceptance tests. On models: "Local LLM models can be used without restrictions,
 but there are limitations when using API services", and "Use locally deployed LLMs to
-maintain full control over the data." Sending MIMIC through OpenAI or any third-party API
-is explicitly prohibited. **A 7B model, Tesseract and Presidio running on your own hardware
-are squarely inside the rules.** Any residual PHI you find must be reported to PhysioNet,
-not kept. Re-identification attempts are forbidden.
+maintain full control over the data." Consumer services such as ChatGPT and the OpenAI API
+are explicitly prohibited; the 2025 update allows certain enterprise services only after
+you verify zero data retention, no training on the data, and no human review, and says
+PhysioNet "cannot verify the data practices of external services." **A 7B model, Tesseract
+and Presidio running on your own hardware are squarely inside the rules.** Any residual PHI
+you find must be reported to PhysioNet, not kept. Re-identification attempts are forbidden.
 
 **What MIMIC can and cannot test here.** Because the PHI is already replaced with `___`
 or bracketed tags, a second de-identification pass finds almost nothing, so **MIMIC cannot
@@ -196,7 +198,7 @@ The vector index, benchmarked here in pgvector 0.8.6 at 384 dimensions:
 |---|---|---|---|---|
 | 100,000 | 22 s | 195 MB | 2,048 B | |
 | 1,020,000 | 4 min 40 s | 1,992 MB | 2,048 B | 10 to 16 ms |
-| plus 20,000 inserts | 82 s | 2,031 MB | | |
+| plus 20,000 inserts, one connection | 82 s, about 4 ms each | 2,031 MB | | |
 | 100,000 as half-precision | 13 s | 112 MB | 1,170 B | |
 
 At 30 million chunks the index alone is about 60 GB and no longer fits this machine's
