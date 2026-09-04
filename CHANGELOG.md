@@ -433,3 +433,18 @@ per query at the placeholder rates, wall time 2 min 47 s. Outputs of all four ru
   validation failures, de-id recall 0.992. The one survivor is an MRN whose `MRN:` label
   Tesseract read as `MAN:`, so the label-anchored recognizer did not fire. A pre-existing
   OCR gap surfaced by new random identifiers, now in `TODO.md`.
+
+## 2026-09-04 — test data at scale
+
+- **`platform/docs/DATASETS.md`.** Verified catalog of every usable corpus: MIMIC-IV-Note
+  (2.65M de-identified notes) and MIMIC-III (2.08M) via PhysioNet credentialing, with the
+  quoted rules on local models and third-party APIs; the n2c2/i2b2 gold sets for
+  de-identification recall; the open sets and which licenses forbid commercial evaluation
+  (CC BY-NC covers PMC-Patients and Asclepius); scanned-document sets for the OCR router;
+  Synthea measured at 50 records per second on this machine with a recipe to 1.23M
+  documents; and a pgvector benchmark at one million vectors.
+- **`scripts/make_synthetic_docs.py`: scanned pages are 13 KB, not 2 MB.** The scan
+  variant embedded a decoded bitmap; it now embeds a hard-thresholded 1-bit image stream
+  with no dither. Verified unchanged extraction on two scanned documents.
+- **Java 21 installed** (Homebrew, keg-only at `/opt/homebrew/opt/openjdk@21`) to run
+  Synthea. No launchd items.

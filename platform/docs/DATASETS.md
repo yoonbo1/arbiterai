@@ -112,9 +112,9 @@ PhysioNet.**
 | corpus | pages | license | note |
 |---|---|---|---|
 | RVL-CDIP | 400,000 scanned pages, 16 classes including forms, letters, handwritten | tobacco-litigation terms; internal use only | contains real SSNs and correspondence; treat outputs as sensitive |
-| IIT-CDIP | about 7 million documents, 42 million pages, 1.5 TB | NIST, no US copyright | the parent of RVL-CDIP |
+| IIT-CDIP | about 7 million documents, roughly 1.4 TB; page count not published | NIST, no US copyright | the parent of RVL-CDIP; the old ir.nist.gov host is gone, download from data.nist.gov |
 | DocLayNet | 80,863 pages, hand-annotated layout | CDLA-Permissive | financial, legal, patents, manuals |
-| PubLayNet | about 364,000 pages | CDLA-Permissive | born-digital scientific |
+| PubLayNet | about 364,000 pages | CDLA-Permissive | born-digital scientific; IBM's official host is dead and the community mirror is partial |
 | NIST SD2 and SD6 | 5,590 and 5,595 tax-form pages | NIST | synthesized and hand-printed forms |
 
 RVL-CDIP is the right corpus to validate that the text / OCR / vision router does the

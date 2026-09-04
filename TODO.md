@@ -58,6 +58,14 @@ with a compliance officer.
 - [ ] Scorer artifact: `negated_or_family_stored_as_present` counts a legitimately present diagnosis when the synthetic generator lists the same condition under family history. Exclude names also in `problems_present`.
 - [ ] **A real extraction evaluation** needs n2c2 2018 track 2 and i2b2 2010 under their data use agreements, plus an in-house set of about 100 OCR'd pages with span-level gold. The synthetic numbers are a floor on a corpus that was written to be easy.
 
+## Test data (2026-09-04)
+
+- [ ] Start PhysioNet credentialing (CITI course, application, per-dataset DUA) for MIMIC-IV-Note; ask PhysioNet in writing whether internal evaluation of a commercial product counts as "scientific research" under license 1.5.0.
+- [ ] Apply to Harvard DBMI for the n2c2 2014 and 2016 de-identification sets; they are the only way to measure recall on realistic identifiers.
+- [ ] Extend `make_synthetic_docs.py` to read all Synthea tables and emit ~20 document types per patient with gold PHI offsets and coded facts (list in `docs/DATASETS.md` §3); run at 60,000 patients on an external SSD.
+- [ ] Load-test tenant isolation of the vector index: a single global HNSW with a tenant filter loses recall for small tenants; decide between per-tenant partitions and partial indexes before real customers.
+- [ ] Consider `halfvec` for `chunks.embedding` (1,170 bytes per vector in the index versus 2,048) before the corpus reaches tens of millions of chunks.
+
 ## Found reviewing the query path (2026-09-03)
 
 - [ ] **Re-identification only covers the question, never the documents.** `reidentify` restores tokens using the map from scrubbing the question. Tokens the model copies out of retrieved chunks (`<PERSON_3>` for the patient, `<PERSON_2>` for the attending) are never looked up in `phi_tokens`, so an answer to "who is the attending physician?" comes back as a placeholder. The encrypted per-document map in `phi_tokens` exists precisely for this and is never read on the query path.
