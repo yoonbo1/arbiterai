@@ -419,7 +419,7 @@ PV1|1|I|WARD^12^1|||...</code></pre>
 
 <div class="cta-band"><div class="wrap" style="padding-top:40px;padding-bottom:40px">
   <h2>Working with records that use every one of these terms?</h2>
-  <div class="actions"><a class="btn btn-primary" href="/contact.html">Request a demo</a><a class="btn btn-ghost" href="/product.html">See how it works</a></div>
+  <div class="actions"><a class="btn btn-primary" href="/how-it-works.html">Read the architecture</a><a class="btn btn-ghost" href="/security.html">Security model</a></div>
 </div></div>
 """
 
@@ -459,6 +459,383 @@ POSTS = [
     },
 ]
 
+# ------------------------------------------------------------- engineering post-mortems
+# Four write-ups from the first eval runs on the synthetic corpus. Every number is from
+# CHANGELOG.md and the run outputs in platform/data/eval/; every code reference is a path
+# in platform/. Bodies are plain HTML like the article above.
+
+_CLOSING = """
+<div class="cta-band"><div class="wrap" style="padding-top:40px;padding-bottom:40px">
+  <h2>Where these checks live in the pipeline</h2>
+  <div class="actions"><a class="btn btn-primary" href="/how-it-works.html">Read the architecture</a><a class="btn btn-ghost" href="/security.html">Security model</a></div>
+</div></div>
+"""
+
+
+def _post_html(title: str, lede: str, date: str, date_human: str, reading_time: str,
+               byline: str, body: str) -> str:
+    return f"""
+<article>
+<section class="hero" style="padding-bottom:40px">
+  <div class="wrap">
+    <p class="kicker">Blog &middot; Engineering post-mortem</p>
+    <h1 style="max-width:26ch">{title}</h1>
+    <p class="lede">{lede}</p>
+    <p class="post-meta"><time datetime="{date}">{date_human}</time><span aria-hidden="true">&middot;</span>{reading_time}<span aria-hidden="true">&middot;</span>{byline}</p>
+  </div>
+</section>
+
+<section class="section-tight"><div class="wrap prose post-body">
+{body}
+<p class="post-backlink"><a href="/blog.html">&larr; All posts</a></p>
+</div></section>
+</article>
+""" + _CLOSING
+
+
+def _reading_time(html: str) -> str:
+    return f"{max(1, round(_word_count(html) / 200))} min read"
+
+
+POST_DAILY = r"""
+<h2 id="the-number">The number</h2>
+<p>The first run of the eval harness (<code>eval/run_eval.py</code>) ingested 20 synthetic discharge summaries and asked 40 gold questions, two per patient. Answer accuracy came back at 0.575: 23 of 40. I expected the weak point to be retrieval or the 7B model. It was neither.</p>
+<p>Grouping the 17 misses by question, 12 were "List the discharge medications." In 11 of those 12 the model had listed every drug with the right dose and left out the frequency. The answer was faithful to the chunk; the chunk was wrong. A stored chunk read:</p>
+<pre><code>Medications: sertraline 50 mg &lt;DATE_TIME_2&gt;; atorvastatin 40 mg &lt;DATE_TIME_3&gt;</code></pre>
+<p>The de-identifier had replaced "daily" and "nightly" with date tokens. Presidio's <code>DATE_TIME</code> recognizer inherits spaCy's <code>DATE</code> label, and spaCy's <code>DATE</code> covers durations and frequencies as well as calendar dates. Across the synthetic corpus, "daily" was scrubbed in 15 of the 19 documents that contained it and "nightly" in 4 of 8. The system prompt tells the model to keep placeholders exactly as written and to answer only from the excerpts, so it wrote "sertraline 50 mg" and stopped. It did what I asked.</p>
+<p>The count that gave it away was <code>phi_tokens</code> grouped by entity type before the fix: DATE_TIME 84, PERSON 66, PHONE_NUMBER 20, MRN 20, LOCATION 18. Twenty synthetic documents with a date of birth, an admission date and a discharge date each is 60 date tokens. Eighty-four meant about two dozen were something else.</p>
+
+<h2 id="the-fix">The fix</h2>
+<p>Safe Harbor removes dates tied to a person: birth, admission, discharge, death. A dosing frequency or a follow-up interval is clinical content, and there is no re-identification risk in the word "nightly". In <code>worker/deid.py</code> a DATE_TIME hit is now kept only if it contains something calendar-like:</p>
+<pre><code>_DATE_LIKE = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\b"  # month names
+    r"|\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b"                                  # 3/5/2024, 03-05-24
+    r"|\b\d{4}-\d{2}-\d{2}\b"                                                  # ISO
+    r"|\b(?:19|20)\d{2}\b"                                                      # a year
+    r"|\b\d{1,2}(?:st|nd|rd|th)\b",                                             # 5th (of March)
+    re.IGNORECASE)
+
+
+def _is_identifying_date(span: str) -> bool:
+    return bool(_DATE_LIKE.search(span))</code></pre>
+<p><code>Scrubber.__call__</code> applies it as a filter on the analyzer's results before anything is replaced. "daily", "nightly" and "in 2 weeks" survive; "March 9", "03/05/2024" and "1985-03-12" do not. Two tests pin both directions: <code>test_dosing_frequency_and_duration_are_not_redacted</code> and <code>test_calendar_dates_are_still_redacted</code> in <code>tests/test_deid.py</code>.</p>
+<p>The filter also uncovered something it had been masking. A bare ten-digit number after <code>Tel:</code> had only been caught because spaCy mislabelled it as a date; with the filter in place it would have survived. The phone recognizer gained a bare-NANP pattern that scores 0.35 on its own, below the 0.5 threshold, and clears it only when Presidio's context enhancer finds a phone-like word nearby. Removing a false positive can expose a false negative that was hiding behind it. Re-run recall after every relaxation.</p>
+
+<h2 id="three-more-gaps">Three more stock-recognizer gaps from the same pass</h2>
+<p>Running the de-identifier against the real Presidio engine in <code>tests/test_deid.py</code> and then against the synthetic corpus found three more places where the stock recognizers fall short of a clinical chart.</p>
+<ul>
+<li><strong>MRNs were never scrubbed.</strong> The custom MRN pattern scored 0.4 against a 0.5 threshold, so every hit was discarded before it reached the resolver and the first test summary came back with its MRN intact. <code>_mrn_recognizer()</code> was rewritten: a labelled <code>MRN: 1234567</code> now scores 0.85 and only the digits are replaced, so the model still sees <code>MRN: &lt;MRN_1&gt;</code>. <code>test_labeled_mrn_forms</code> covers six spellings of the label. That rewrite is why the table above shows exactly 20 MRN tokens for 20 documents.</li>
+<li><strong>Phone numbers with extensions.</strong> Presidio's phonenumbers-based recognizer missed NANP numbers with extensions such as <code>+1-921-899-3518x19093</code>. <code>_phone_recognizer()</code> is a regex backstop: optional country code, area code with or without parentheses, and an extension group <code>(?:\s*(?:x|ext\.?|extension)\s*\d{1,6})?</code>. <code>test_phone_forms_with_extensions</code> covers five formats.</li>
+<li><strong>Physician surnames that are common words.</strong> spaCy missed Dr. Fields, Dr. Lewis, Dr. Young and Dr. Holder: the four whole-string survivors in run 1, which is where the synthetic de-id recall of 0.967 (116/120) came from. <code>_name_recognizer()</code> anchors on a title or field label (<code>Dr.</code>, <code>Doctor</code>, <code>Attending:</code>, <code>Patient:</code>, <code>Name:</code>) and replaces only the name, so <code>Attending: Dr. &lt;PERSON_2&gt;</code> keeps its title. Presidio compiles every pattern with <code>IGNORECASE</code>, so the name part is wrapped in <code>(?-i:...)</code> to stop at the first lowercase word; without that, "Dr. Priya Raghunathan-Okafor reviewed" swallowed "reviewed".</li>
+</ul>
+<p>A later finding in the same family: after those fixes some charts read <code>Attending: &lt;PERSON_2&gt;. &lt;PERSON_1&gt;</code>. spaCy had tagged the bare title "Dr" as a person, and the model answered "the attending physician is Dr." <code>_trim_person()</code> now drops a span whose every word is a title or a field label, trims leading titles and trailing labels off the rest ("Dr Young" becomes "Young", "Joshua Duncan DOB" becomes "Joshua Duncan"), and drops the span if nothing is left. Tests: <code>test_bare_title_is_never_a_person_token</code> and <code>test_person_span_is_trimmed_of_leading_title_and_trailing_label</code>.</p>
+
+<h2 id="before-and-after">Before and after</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Synthetic corpus, 20 documents, 40 questions</th><th>Run 1</th><th>Run 4</th></tr></thead>
+<tbody>
+<tr><td>Answer accuracy, strict</td><td>0.575 (23/40)</td><td>0.95 (38/40)</td></tr>
+<tr><td>Misses on "List the discharge medications"</td><td>12 of 17 misses; 11 caused by a scrubbed frequency</td><td>the two misses left in the run are Tesseract misreads</td></tr>
+<tr><td>"daily" scrubbed</td><td>15 of 19 documents</td><td>kept; pinned by test</td></tr>
+<tr><td>"nightly" scrubbed</td><td>4 of 8 documents</td><td>kept; pinned by test</td></tr>
+<tr><td>De-id recall, whole string</td><td>0.967 (116/120)</td><td>1.000</td></tr>
+<tr><td>Labelled MRN score vs. 0.5 threshold</td><td>0.4, never fired</td><td>0.85, digits only replaced</td></tr>
+</tbody></table></div>
+<p>The two remaining misses are Tesseract misreads on the synthetic scans that the model copied faithfully: "fisinopril" for lisinopril and "HbAtc" for HbA1c. Those need the vision route on a GPU box or a drug-name correction step, and they are tracked in <code>TODO.md</code>.</p>
+<div class="callout"><p><strong>Scope.</strong> Every number here is from the synthetic corpus: Faker names, one document type, dates in three formats. It says nothing about recall on real names or real scans. The i2b2 2014 de-identification set is the real test, pending credentialed access. The recall side of this run has its own post: <a href="/blog/deid-recall-flattering-metric.html">the whole-string recall metric was flattering</a>.</p></div>
+
+<h2 id="what-to-check">What to check in your own pipeline</h2>
+<ul>
+<li>Count tokens by entity type, not just recall. 84 DATE_TIME tokens on 20 documents with three dates each was the tell.</li>
+<li>Diff one scrubbed document against its source and read the medication list by hand.</li>
+<li>Check that your date recognizer separates calendar dates from frequencies and durations. spaCy's <code>DATE</code> label does not.</li>
+<li>Assert in a test that every custom recognizer's score clears the threshold. A 0.4 pattern against a 0.5 gate is silently doing nothing.</li>
+<li>Scrub "Attending: Dr." on its own and check that no PERSON token comes out.</li>
+<li>After removing any false positive, re-run recall. Something may have been depending on it.</li>
+</ul>
+<p>The validation side of the same run, where the judge threw away correct answers, is in <a href="/blog/7b-judge-citation-placement.html">the 7B judge scored identical facts 0.0 or 1.0</a>. Where de-identification sits relative to the model call is on the <a href="/how-it-works.html">architecture page</a>.</p>
+"""
+
+POST_RECALL = r"""
+<h2 id="the-number">The number</h2>
+<p>The harness in <code>eval/run_eval.py</code> is simple on purpose. The synthetic generator records every identifier it injects into each of 20 discharge summaries: name, date of birth, MRN, phone, address, attending physician. After ingest, the harness reads every stored chunk as the application role and checks whether each injected string appears verbatim. Run 1 reported a synthetic de-id recall of 0.967: 116 of 120 strings gone. The four survivors were all <code>Dr. &lt;common-word surname&gt;</code>, which spaCy's NER had missed and which a title-anchored recognizer fixed (that story is in <a href="/blog/spacy-redacted-daily.html">the "daily" post</a>).</p>
+<p>That read as a near miss on the 0.99 gate. It was not. A stored chunk read:</p>
+<pre><code>Address: 1049 Mitchell Lights Suite 075, &lt;LOCATION_1&gt;, AR 29101</code></pre>
+<p>The injected identifier was the whole 40-character string, street through ZIP. The check asked whether that string appeared in the chunks. It did not, because the city was gone, so the metric counted the address as removed. The street number, street name, unit, state and ZIP were all sitting in the index.</p>
+<p>Counting by component across the 20 synthetic documents: the ZIP survived in 14 of 20, the street line in 7 of 20, the city in 6 of 20, and the state in 20 of 20 (a state is allowed under Safe Harbor). By component, roughly 97 of 120 identifiers were actually gone: about 0.81, not 0.967.</p>
+<p>The city was the only part being caught because Presidio ships no US street-address recognizer. spaCy's NER tags a city it recognizes, and nothing else on the line. The Faker-invented cities in the synthetic corpus (Blankenshipstad, Hernandezview, Kingland, New Amber) it mostly did not recognize either.</p>
+
+<h2 id="fix-1">Fix 1: a metric that partial hits cannot flatter</h2>
+<p><code>deid_recall_strict</code> in <code>eval/run_eval.py</code> splits each multi-part identifier on commas and counts any surviving component of four or more characters as a leak. It is reported alongside the old number, not instead of it, so the gap between the two is itself visible in every run.</p>
+<pre><code>parts = [(p, part.strip()) for p in phi for part in p.split(",") if len(part.strip()) &gt;= 4]
+leaked_parts = sorted({part for _, part in parts if part in text})
+...
+"deid_recall_strict": 1 - len(leaked_parts) / max(1, len({part for _, part in parts})),
+"phi_component_survivors": leaked_parts[:8],</code></pre>
+
+<h2 id="fix-2">Fix 2: an address recognizer</h2>
+<p><code>_address_recognizer()</code> in <code>worker/deid.py</code> adds four LOCATION patterns:</p>
+<ul>
+<li>A labelled <code>Address:</code> line, taken whole as <code>street, city, ST ZIP</code> (up to three comma segments) and stopping at a run of two spaces, the next <code>Label:</code> on the line, or end of line. Score 0.85.</li>
+<li>A street line: a number, one to four words, a USPS suffix (Street, Lights, Roads, and the rest of the list), an optional unit. Score 0.6.</li>
+<li><code>City, ST 12345</code>, which needs no knowledge of city names at all. Score 0.6. This is the pattern that closed the Faker-city gap.</li>
+<li>A bare ZIP, <code>\d{5}(?:-\d{4})?</code>, at 0.35, below the 0.5 threshold, lifted only when address context words (address, street, zip, apt, suite) are nearby. It started at 0.6, and <code>WBC 11000</code> was scrubbed as a ZIP code.</li>
+</ul>
+<p>Tests: <code>test_labelled_address_line_is_fully_redacted</code> and <code>test_city_state_zip_without_label_is_redacted</code>.</p>
+
+<h2 id="fix-3">Fix 3: overlapping spans merge into their union</h2>
+<p>With the city pattern in place a new failure appeared. In <code>Kingland, TX 75001</code>, spaCy tagged <code>Kingland</code> as LOCATION at 0.85 and my pattern tagged the whole <code>Kingland, TX 75001</code> at 0.6. Presidio dropped the ZIP as a duplicate contained in the longer span, and the old <code>_select()</code> rule, "keep the best-scoring overlapping span, drop the rest", kept the shorter, higher-scoring city. The index read <code>&lt;LOCATION_3&gt;, TX 75001</code>.</p>
+<p><code>_select()</code> now merges overlapping candidates into their union, typed by the highest-scoring member:</p>
+<pre><code>for r in sorted((r for r in results if r.end &gt; r.start), key=lambda r: (r.start, -(r.end - r.start))):
+    if groups and r.start &lt; groups[-1]["end"]:
+        g = groups[-1]
+        g["end"] = max(g["end"], r.end)          # the union, never the best fragment
+        ...</code></pre>
+<p>The argument for union is that the two error types are not symmetric. Over-redaction is recoverable: the token maps back through <code>phi_tokens</code> and re-identification restores it for the authorized caller after validation (<a href="/how-it-works.html">how it works</a>). Under-redaction is a breach. So no fragment of any above-threshold candidate may survive, and union is the only safe policy. <code>test_select_merges_overlaps_into_their_union_typed_by_the_best_member</code> covers a phone number with an MRN-shaped run inside it, a year inside a full date, and a city inside a <code>City, ST ZIP</code> line.</p>
+
+<h2 id="harness">The harness shape, and four iterations in a day</h2>
+<p>20 synthetic records, two gold questions each, 40 queries. One run ingests 20 documents, asks 40 questions, and reads the chunks: about 2 min 50 s of wall time and about half a cent at the placeholder per-token rates in <code>worker/llm.py</code>. That is cheap enough to run after every change, which is how the four iterations fit into one day.</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Run (synthetic, 20 docs)</th><th>Whole-string recall</th><th>Strict per-component</th><th>What changed before it</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>0.967</td><td>not measured; about 0.81 by hand</td><td>baseline</td></tr>
+<tr><td>2</td><td>1.000</td><td>0.9625</td><td>title-anchored names; labelled <code>Address:</code>, street-line and ZIP patterns; the strict metric</td></tr>
+<tr><td>3</td><td>1.000</td><td>1.000</td><td><code>City, ST 12345</code> pattern; labelled pattern takes the whole line</td></tr>
+<tr><td>4</td><td>1.000</td><td>1.000</td><td>union overlap resolution, whitespace trim, case-sensitive names (from new tests, not the eval)</td></tr>
+</tbody></table></div>
+<p>The six strict survivors in run 2 were all Faker city names: Blankenshipstad, Hernandezview, Kingland, New Amber, New Brendaton, New Bryanhaven. Run 3's <code>City, ST 12345</code> pattern removed them without knowing any of them.</p>
+<div class="callout"><p><strong>What 1.000 does not prove.</strong> On the regenerated synthetic corpus that includes OCR'd scans, whole-string recall is 0.992: one MRN survived because Tesseract read its <code>MRN:</code> label as <code>MAN:</code>, and the recognizer is anchored on the label. Beyond that, the synthetic number says nothing about real names (Faker names are clean and capitalized), about OCR-mangled identifiers in general, or about facility names, which are not scrubbed at all. Those are in <code>TODO.md</code>. The i2b2 2014 de-identification corpus is the real test, pending credentialed access.</p></div>
+
+<h2 id="what-to-check">What to check in your own pipeline</h2>
+<ul>
+<li>If an identifier has parts, score the parts. A whole-string check passes when one word of an address is gone.</li>
+<li>Read a stored chunk. One <code>SELECT text FROM chunks LIMIT 1</code> found this; the metric never would have.</li>
+<li>Do not rely on NER for geography. Add patterns for <code>City, ST ZIP</code> and street lines that need no city list.</li>
+<li>Resolve overlapping spans as a union. "Best span wins" leaves the rest of the line in the index.</li>
+<li>Run the leak check as the role RLS applies to. If the harness connects as the owner, it reads every tenant's chunks and proves nothing about isolation (<a href="/blog/postgres-superuser-bypasses-rls.html">the superuser post</a>).</li>
+<li>Make one iteration cheap enough to run four times a day, and report the new metric next to the old one.</li>
+</ul>
+<p>What the de-identifier guarantees, and what it does not, is written up on the <a href="/security.html">security model</a> page.</p>
+"""
+
+POST_JUDGE = r"""
+<h2 id="the-number">The number</h2>
+<p>The validation node in <code>worker/graph.py</code> runs three checks on every answer before it can be re-identified: no PHI in the output (<code>deid.contains_phi</code>), at least one citation to a retrieved chunk, and a grounding score. The grounding score comes from <code>llm.faithfulness_score</code>, which asks the small model (qwen2.5:7b-instruct via Ollama, temperature 0) for a single number between 0 and 1, the fraction of the answer's claims that the excerpts support, and gates at 0.7 or above.</p>
+<p>In run 1 on the synthetic corpus, validation rejected 5 of 40 answers. All five were the same question, "What is the patient's most recent HbA1c?", and all five were correct. A typical one: "The patient's most recent HbA1c is 9.0% [7]."</p>
+<p>I re-issued the exact judge prompts by hand, changing only the answer text:</p>
+<pre><code>The patient's most recent HbA1c is 9.0% [7].   -&gt;  0.0
+The patient's most recent HbA1c is 9.0%. [7]   -&gt;  1.0
+The patient's most recent HbA1c is 9.0%.       -&gt;  1.0
+HbA1c 9.0% [7]                                 -&gt;  1.0</code></pre>
+<p>Same facts, same context, same model, temperature 0. A citation marker before the full stop scored 0.0; after it, 1.0. The judge prompt already told the model to ignore citation markers like <code>[12]</code>. It did not.</p>
+
+<h2 id="escalation">Escalation made it worse, at about 8x the cost</h2>
+<p><code>after_validate</code> in <code>worker/graph.py</code> sends a rejected answer back to <code>generate</code> once, on the "large" tier, before failing the job. On this machine there is no separate large model: <code>LARGE_MODEL_URL</code> is unset and <code>worker/llm.py</code> falls back to the small tier's URL and model. So escalation re-ran the same model at temperature 0, got the same "9.0% [7].", got the same 0.0 from the same judge, and discarded a correct answer for the second time.</p>
+<p>The cost accounting made it look expensive rather than free, because the escalated call is metered at the large-tier rate: 0.0539 cents against 0.0066 cents for the small-tier attempt, at the placeholder rates in <code>COST_PER_1K</code>. About 8x, to reproduce a rejection.</p>
+
+<h2 id="unbilled">Half the model traffic was never counted</h2>
+<p>While reading the judge's prompts I noticed their size: about 330 prompt tokens per call, the judge instructions plus every retrieved chunk plus the answer. The judge runs on every answer, and the answer call is roughly the same size, so the judge was about half of all small-tier traffic. <code>faithfulness_score</code> returned only the float and discarded the response's <code>usage</code>. None of it reached <code>jobs.tokens_small</code>, so the per-query cost in the eval report was about half the truth.</p>
+
+<h2 id="the-fix">The fix</h2>
+<p>Both changes are in <code>worker/llm.py</code>. Citation markers are stripped before the answer reaches the judge, and the judge returns its token count so <code>graph.validate</code> can meter it:</p>
+<pre><code>_CITE = re.compile(r"\s*\[\d+\]")
+
+
+def faithfulness_score(answer_text: str, chunks: list[dict]) -&gt; tuple[float, int]:
+    ctx = "\n".join(c["text"] for c in chunks)
+    claim = _CITE.sub("", answer_text).strip()
+    out, used = _chat("small", [
+        {"role": "system", "content": JUDGE},
+        {"role": "user", "content": f"CONTEXT:\n{ctx}\n\nANSWER:\n{claim}"}], max_tokens=8)
+    ...
+    return max(0.0, min(1.0, v)), used</code></pre>
+<pre><code># worker/graph.py, validate()
+score, used = llm.faithfulness_score(state["answer_deid"], state["chunks"])
+usage["small"] = usage.get("small", 0) + used      # judge calls are metered too</code></pre>
+<p>The judge prompt itself had already been rewritten once during bring-up: a vaguer "fraction of claims" wording scored a fully supported answer 0.5 on this model, below the gate. The current <code>JUDGE</code> text asks for 1.0 if every claim is stated in the context, 0.0 if none is, otherwise the fraction, and was measured at 1.0 supported and 0.0 unsupported. The lesson from the citation bug is that an instruction to ignore something is not the same as removing it. Normalize the input; do not ask a 7B model to.</p>
+
+<h2 id="before-and-after">Before and after</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>Synthetic corpus, 40 queries</th><th>Run 1</th><th>Run 2</th></tr></thead>
+<tbody>
+<tr><td>Answers rejected by validation</td><td>5</td><td>1</td></tr>
+<tr><td>Escalations</td><td>5</td><td>1</td></tr>
+<tr><td>Answer accuracy, strict</td><td>0.575</td><td>0.95</td></tr>
+<tr><td>Small-tier tokens for the run</td><td>13,055 (judge unbilled)</td><td>24,969 (judge metered)</td></tr>
+<tr><td>Large-tier tokens for the run</td><td>1,586</td><td>297</td></tr>
+<tr><td>Cost per query, placeholder rates</td><td>0.012 cents</td><td>0.014 cents</td></tr>
+</tbody></table></div>
+<p>The small-tier count roughly doubling is the honest number, not a regression: nothing changed in the answer path, the judge's calls are simply counted now. Runs 3 and 4 came in at about 24,000. The one rejection that remained in run 2 was an answer that copied a Tesseract misread, "HbAtc 7.2%", verbatim from a scanned page; that is an OCR problem, tracked separately. On the regenerated synthetic corpus the QA eval reports 0 validation failures and accuracy 0.95.</p>
+<div class="callout"><p><strong>Still open</strong> (both in <code>TODO.md</code>). Escalating to the same model at temperature 0 cannot change a verdict, so either the large tier gets a genuinely larger model or escalation is skipped when the tiers are identical. And a 7B model asked for one number is format-sensitive by nature; stripping citations removed the case I found, not the class. Claim-level checking, or a calibrated entailment model with judge agreement measured on a labelled set, is the longer-term answer.</p></div>
+
+<h2 id="what-to-check">What to check in your own pipeline</h2>
+<ul>
+<li>Log the judge's verdict next to the answer for every rejection, and read the rejections. Five identical questions was the tell.</li>
+<li>Reproduce with the exact prompt and change one thing. Citation placement took four calls to isolate.</li>
+<li>Normalize the answer before judging: strip citations, placeholders and trailing punctuation. Do not rely on the prompt to do it.</li>
+<li>Meter every model call, including the ones that return one number. A judge that runs on every answer is not overhead; it is half the bill.</li>
+<li>Check what your "large" tier actually is. If it resolves to the same model, escalation is a retry at a higher price.</li>
+<li>Compare the cost of a rejection to the cost of an answer. Here a wrong rejection cost more than a right answer.</li>
+</ul>
+<p>The other 12 misses in the same run were the de-identifier's fault, not the judge's: <a href="/blog/spacy-redacted-daily.html">spaCy redacted the word "daily"</a>. Where validation sits in the query graph, and what it gates, is on the <a href="/how-it-works.html">architecture page</a>.</p>
+"""
+
+POST_RLS = r"""
+<h2 id="the-bug">The bug</h2>
+<p><code>db/init.sql</code> did the right things on paper. Row-level security was enabled on <code>patients</code>, <code>documents</code>, <code>chunks</code>, <code>phi_tokens</code> and <code>jobs</code>, each with a <code>tenant_isolation</code> policy:</p>
+<pre><code>CREATE POLICY tenant_isolation ON chunks
+  USING      (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);</code></pre>
+<p>It also created an <code>app_rw</code> role, with a hard-coded password, that nothing used. The gateway and the worker both connected with <code>DATABASE_URL</code> as the <code>hipaa</code> role: the database owner and, in the compose file, the superuser. Postgres exempts superusers from row-level security entirely, and a table's owner bypasses it too unless <code>FORCE ROW LEVEL SECURITY</code> is set. So all five policies were silently ignored. The README's claim that another tenant's jobs return 404 "via RLS" was false. The job lookup in <code>gateway/main.py</code> is <code>SELECT status, result, finished_at FROM jobs WHERE id=$1</code>, with no tenant filter at all, because the policy was meant to supply it. With the policy bypassed, any tenant's key could read any job by id.</p>
+<p>Five tables under RLS, zero enforced against the role in use. I found it by asking what role the eval harness's leak check was running as. If the harness reads chunks as the owner, it reads every tenant's chunks, and a zero-leak result proves nothing about isolation.</p>
+
+<h2 id="the-fix">The fix</h2>
+<p><strong>Both services connect as <code>app_rw</code>.</strong> The role is created in <code>db/init.sql</code> without a password and cannot log in until <code>db/02_app_role.sh</code> sets one. The split is forced by the Postgres image: init <code>.sql</code> files get no environment substitution, init <code>.sh</code> files do. The password is passed as a psql variable, so it never appears in SQL text or in a log line:</p>
+<pre><code>: "${PG_APP_PASSWORD:?PG_APP_PASSWORD must be set in the postgres service environment}"
+psql -v ON_ERROR_STOP=1 -v pw="$PG_APP_PASSWORD" --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" &lt;&lt;'SQL'
+ALTER ROLE app_rw PASSWORD :'pw';
+SQL</code></pre>
+<p><strong>The grants were wrong too.</strong> The blanket <code>GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO app_rw</code> had given the application role UPDATE on <code>audit_log</code>. The <code>REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC</code> above it does not touch a direct grant, so append-only was defeated by the very next statement. The grants now read:</p>
+<pre><code>GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO app_rw;
+GRANT DELETE ON chunks, phi_tokens TO app_rw;        -- re-ingest replaces derived rows
+REVOKE UPDATE, DELETE ON audit_log FROM app_rw;      -- append-only again
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO app_rw;
+-- no CREATE on schema public: the app never creates tables</code></pre>
+<p><strong>Tenant context is transaction-local.</strong> Every handler in <code>gateway/main.py</code> and <code>tenant_conn()</code> in <code>worker/store.py</code> set it with <code>set_config('app.tenant_id', $1, true)</code>. The <code>true</code> means "local to this transaction". With a session-level <code>SET</code>, a pooled connection returned after tenant A's request would carry A's context into whatever transaction borrowed it next.</p>
+<p><strong>The harness refuses to lie.</strong> <code>eval/run_eval.py</code> checks its own role before it reads a single chunk:</p>
+<pre><code>if con.execute("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
+    raise SystemExit("DATABASE_URL must use the RLS-bound app role (app_rw), not the owner/superuser")</code></pre>
+
+<h2 id="probes">The probes</h2>
+<p>Two tenants, A and B, each with its own API key, and one ingested document under A.</p>
+<pre><code>GET /v1/jobs/{A's job}   Authorization: Bearer {key A}   -&gt;  200
+GET /v1/jobs/{A's job}   Authorization: Bearer {key B}   -&gt;  404  {"detail":"job not found"}
+
+-- psql as app_rw
+SELECT count(*) FROM chunks;                                          -- app.tenant_id unset
+ 0
+SELECT set_config('app.tenant_id', '&lt;A&gt;', true); SELECT count(*) FROM chunks WHERE tenant_id = '&lt;B&gt;';
+ 0                                                                    -- and A's rows are visible
+SELECT set_config('app.tenant_id', '&lt;B&gt;', true); SELECT count(*) FROM chunks WHERE tenant_id = '&lt;A&gt;';
+ 0                                                                    -- the reverse
+SELECT set_config('app.tenant_id', '&lt;A&gt;', true); INSERT INTO chunks (tenant_id, ...) VALUES ('&lt;B&gt;', ...);
+ ERROR:  new row violates row-level security policy for table "chunks"
+SELECT has_schema_privilege('app_rw', 'public', 'CREATE');
+ f
+
+-- psql as the owner, for contrast
+SELECT count(*) FROM chunks;                                          -- every tenant's rows</code></pre>
+<p>The owner session seeing everything is the before state. That is what the gateway and the worker had been running as.</p>
+
+<h2 id="before-and-after">Before and after</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th></th><th>Before</th><th>After</th></tr></thead>
+<tbody>
+<tr><td>Role the services connect as</td><td><code>hipaa</code> (owner, superuser)</td><td><code>app_rw</code></td></tr>
+<tr><td>Tables with a policy that is enforced</td><td>0 of 5</td><td>5 of 5</td></tr>
+<tr><td>Key B on tenant A's job</td><td>200; the lookup has no tenant filter of its own</td><td>404 from the policy</td></tr>
+<tr><td><code>app_rw</code> with no tenant context</td><td>not applicable</td><td>0 rows</td></tr>
+<tr><td>INSERT for B while set to A</td><td>succeeds</td><td>rejected by the policy</td></tr>
+<tr><td>UPDATE on <code>audit_log</code> for the app role</td><td>granted, by the blanket grant</td><td>revoked</td></tr>
+<tr><td>Application password</td><td>hard-coded in <code>init.sql</code></td><td><code>PG_APP_PASSWORD</code>, via <code>02_app_role.sh</code></td></tr>
+<tr><td>Eval harness as a superuser</td><td>ran; leak check meaningless</td><td>refuses to start</td></tr>
+</tbody></table></div>
+
+<h2 id="design">The design point</h2>
+<p>Tenant isolation must not depend on application code being bug-free. A lookup with no tenant filter (which is exactly what the job endpoint is, by design), a wrong join, a connection that came back from the pool with someone else's context: with row-level security enforced, each of those returns zero rows or an error. Without it, each returns another tenant's records. But that guarantee is only real if the policy applies to the role the application actually uses. A policy the connecting role is exempt from is documentation, not a control, and it is worse than no policy because it is reassuring. The invariants this enforces, and how each is tested, are on the <a href="/security.html">security model</a> page.</p>
+<div class="callout"><p><strong>What is still not under RLS</strong> (tracked in <code>TODO.md</code>). <code>audit_log</code> has no policy, so <code>app_rw</code> can read every tenant's audit rows; it needs a policy or a tenant-scoped view. And RLS scopes rows by whatever the application sets: the application role can read any tenant's rows once <code>app.tenant_id</code> is set to that tenant, so a bug that sets the wrong value is still a bug. The gateway takes the tenant from the API key's row, never from the request body, and that is the line the policy holds.</p></div>
+
+<h2 id="what-to-check">What to check in your own pipeline</h2>
+<ul>
+<li>From inside the application's own connection: <code>SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user</code>. If either is true, your policies are not applying.</li>
+<li>Check table ownership too. Owners bypass RLS unless <code>FORCE ROW LEVEL SECURITY</code> is set.</li>
+<li>Run the negative probes as the application role: no context set, expect zero rows; an INSERT for the wrong tenant, expect an error.</li>
+<li>Read every blanket <code>GRANT ... ON ALL TABLES</code> and check what it gave on the tables that are supposed to be append-only.</li>
+<li>Set tenant context with <code>set_config(..., true)</code> or <code>SET LOCAL</code>, never a session-level <code>SET</code>, on any pooled connection.</li>
+<li>Make the test harness refuse to run as a role that bypasses RLS, so a passing leak check means something.</li>
+<li>List the tables that have no policy, and write that list down where the next person will read it.</li>
+</ul>
+<p>The leak check that this role change made meaningful is described in <a href="/blog/deid-recall-flattering-metric.html">the recall metric post</a>.</p>
+"""
+
+_NEW_POSTS = [
+    {
+        "slug": "spacy-redacted-daily",
+        "title": "spaCy redacted the word 'daily' — and broke 11 of 12 medication lists",
+        "description": ("Post-mortem: Presidio's stock date recognizer treated dosing frequencies as "
+                        "identifiers and cut answer accuracy to 0.575 on a synthetic corpus. The "
+                        "calendar-date filter, three more stock-recognizer gaps, and what to check."),
+        "summary": ("The first eval run scored 23 of 40. Twelve misses were the same question, and "
+                    "eleven of them traced to the de-identifier replacing 'daily' with a date token. "
+                    "The fix, three more Presidio gaps, and the tokens-by-entity count that gave it away."),
+        "lede": ("The first eval run scored 23 of 40 gold questions. Twelve misses were the same "
+                 "question, and the de-identifier had caused eleven of them."),
+        "body_src": POST_DAILY,
+    },
+    {
+        "slug": "deid-recall-flattering-metric",
+        "title": "Our de-id recall read 0.967 while ZIP codes survived in 14 of 20 documents",
+        "description": ("Post-mortem: a whole-string recall metric passed addresses whose street "
+                        "line and ZIP were still in the index. The per-component metric, an address "
+                        "recognizer, union overlap resolution, and four eval iterations in a day."),
+        "summary": ("The metric checked whether each injected identifier survived whole. An address "
+                    "is four things and only the city was ever tokenized. A strict per-component "
+                    "metric, an address recognizer, and why overlapping spans must merge into their union."),
+        "lede": ("The metric checked whether each injected identifier survived whole. An address is "
+                 "four things, and only one of them was ever tokenized."),
+        "body_src": POST_RECALL,
+    },
+    {
+        "slug": "7b-judge-citation-placement",
+        "title": "The 7B judge scored identical facts 0.0 or 1.0 depending on where the citation sat",
+        "description": ("Post-mortem: the grounding judge rejected five correct answers over citation "
+                        "placement, escalation re-ran the same model at 8x the cost, and the judge's "
+                        "calls were half of all model traffic and unbilled. The fix and the accounting."),
+        "summary": ("Five correct answers rejected, all the same question. '9.0% [7].' scored 0.0 and "
+                    "'9.0%. [7]' scored 1.0. Escalation re-ran the same model at 8x the cost, and the "
+                    "judge's calls were half the traffic and never metered."),
+        "lede": ("Five correct answers were rejected, all to the same question. The only difference "
+                 "between a 0.0 and a 1.0 was which side of the full stop the citation sat on."),
+        "body_src": POST_JUDGE,
+    },
+    {
+        "slug": "postgres-superuser-bypasses-rls",
+        "title": "The services were connecting as the Postgres superuser, which silently bypasses RLS",
+        "description": ("Post-mortem: five tables had row-level security policies and none applied, "
+                        "because the gateway and worker connected as the owner. The app role, the "
+                        "grants, transaction-local tenant context, and the probes that prove it now."),
+        "summary": ("Five tables carried a tenant-isolation policy and none of it applied, because "
+                    "both services connected as the database owner. The app role, the audit_log grant "
+                    "that defeated append-only, and the cross-tenant probes."),
+        "lede": ("Five tables carried a tenant-isolation policy. None of it applied to the role the "
+                 "services were using."),
+        "body_src": POST_RLS,
+    },
+]
+
+for _p in _NEW_POSTS:
+    _html = _post_html(_p["title"], _p["lede"], "2026-09-04", "September 4, 2026",
+                       _reading_time(_p["body_src"]), "Yoonbo Cho", _p["body_src"])
+    POSTS.append({
+        "slug": _p["slug"],
+        "path": f"blog/{_p['slug']}.html",
+        "title": _p["title"],
+        "page_title": f"{_p['title']} — Arbiter AI",
+        "description": _p["description"],
+        "summary": _p["summary"],
+        "date": "2026-09-04",
+        "date_human": "September 4, 2026",
+        "reading_time": _reading_time(_p["body_src"]),
+        "section": "Engineering post-mortem",
+        "author": "Yoonbo Cho",
+        "body": _html,
+        "word_count": _word_count(_p["body_src"]),
+    })
+
+# Newest first on the index and in the feed (stable sort keeps the four post-mortems in
+# the order above, which is the order the home page links them).
+POSTS.sort(key=lambda p: p["date"], reverse=True)
+
 BLOG_INDEX_PATH = "blog.html"
 BLOG_TITLE = "Blog — Arbiter AI"
 BLOG_DESC = ("Field notes on clinical documents, health data standards, and building AI "
@@ -481,7 +858,10 @@ def _post_head(post):
         "@context": "https://schema.org", "@type": "BlogPosting",
         "headline": post["title"], "description": post["description"],
         "datePublished": post["date"], "dateModified": post["date"],
-        "author": {"@type": "Organization", "name": "Arbiter AI", "url": "__SITE__"},
+        "author": ({"@type": "Person", "name": post["author"],
+                    "worksFor": {"@type": "Organization", "name": "Arbiter AI", "url": "__SITE__"}}
+                   if post.get("author") else
+                   {"@type": "Organization", "name": "Arbiter AI", "url": "__SITE__"}),
         "publisher": _PUBLISHER,
         "mainEntityOfPage": {"@type": "WebPage", "@id": url},
         "image": "__SITE__/assets/og-image.png",
@@ -542,7 +922,7 @@ BLOG_INDEX = f"""
 
 <section class="section-tight"><div class="wrap">
   <div class="blog-list">{"".join(_card(p) for p in POSTS)}</div>
-  <p class="small blog-feed">More is on the way. Subscribe by <a href="/feed.xml">RSS</a>, or <a href="/contact.html">tell us what you want written about</a>.</p>
+  <p class="small blog-feed">More is on the way. Subscribe by <a href="/feed.xml">RSS</a>, or <a href="/contact.html">tell me what you want written about</a>.</p>
 </div></section>
 """
 

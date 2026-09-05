@@ -9,8 +9,17 @@ from xml.sax.saxutils import escape
 # generated URLs point at the host actually serving the page.
 SITE = os.environ.get("SITE_URL", "https://arbiterai.tech").rstrip("/")
 OUT = Path("public")
-NAV = [("Product", "product.html"), ("Security", "security.html"), ("Pricing", "pricing.html"),
+NAV = [("How it works", "how-it-works.html"), ("Security model", "security.html"),
        ("Docs", "docs.html"), ("Blog", "blog.html"), ("About", "about.html")]
+
+# Positioning, verbatim from the repositioning brief. ONE_LINER is the home page's hero sub
+# and its meta/og description; SHORT is every other page's description and the footer
+# tagline. The page modules import them from here so each sentence exists once.
+ONE_LINER = ("Arbiter AI is an open reference implementation of HIPAA-safe document AI: "
+             "de-identification before any model call, cited and verified answers, "
+             "database-enforced patient isolation, and an append-only audit trail — with the "
+             "evaluation harness that proves each of those properties holds.")
+SHORT = "Open reference implementation of HIPAA-safe document AI, with the evals to prove it."
 
 SHELL = """<!doctype html>
 <html lang="en">
@@ -28,7 +37,7 @@ SHELL = """<!doctype html>
 <meta property="og:image" content="{site}/assets/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Arbiter AI: private, verified AI for clinical documents">
+<meta property="og:image:alt" content="Arbiter AI: open reference implementation of HIPAA-safe document AI">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{title}">
 <meta name="twitter:description" content="{desc}">
@@ -39,7 +48,7 @@ SHELL = """<!doctype html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/styles.css">
-<script type="application/ld+json">{{"@context":"https://schema.org","@type":"Organization","name":"Arbiter AI","url":"{site}","logo":"{site}/assets/logo.svg","contactPoint":{{"@type":"ContactPoint","email":"hello@arbiterai.tech","contactType":"sales"}}}}</script>
+<script type="application/ld+json">{{"@context":"https://schema.org","@type":"Organization","name":"Arbiter AI","url":"{site}","logo":"{site}/assets/logo.svg","contactPoint":{{"@type":"ContactPoint","email":"hello@arbiterai.tech","contactType":"author"}}}}</script>
 {head_extra}
 </head>
 <body>
@@ -50,7 +59,6 @@ SHELL = """<!doctype html>
     <button class="nav-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav class="nav" id="nav" aria-label="Primary">
       {navlinks}
-      <a class="btn btn-primary" href="/contact.html">Request a demo</a>
     </nav>
   </div>
 </header>
@@ -59,18 +67,20 @@ SHELL = """<!doctype html>
 </main>
 <footer class="site-foot">
   <div class="wrap">
-    <div class="foot-grid">
-      <div>
-        <a class="brand" href="/">{logo_light} Arbiter AI</a>
-        <p>Private, auditable AI for clinical documents. Runs in your environment or ours, under a signed BAA.</p>
-      </div>
-      <div><h4>Product</h4><a href="/product.html">How it works</a><a href="/security.html">Security &amp; compliance</a><a href="/pricing.html">Pricing</a><a href="/docs.html">Documentation</a><a href="/blog.html">Blog</a></div>
-      <div><h4>Company</h4><a href="/about.html">About</a><a href="/contact.html">Contact</a><a href="mailto:hello@arbiterai.tech">hello@arbiterai.tech</a></div>
-      <div><h4>Legal</h4><a href="/privacy.html">Privacy policy</a><a href="/terms.html">Terms of service</a><a href="/security.html#baa">Business associate agreement</a></div>
+    <div class="foot-row">
+      <a class="brand" href="/">{logo_light} Arbiter AI</a>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="/how-it-works.html">Architecture</a>
+        <a href="/security.html">Security model</a>
+        <a href="/docs.html#evals">Evals</a>
+        <a href="/blog.html">Blog</a>
+        <a href="/contact.html">Contact</a>
+      </nav>
     </div>
+    <p class="foot-tag">{short}</p>
     <div class="foot-bottom">
-      <span>&copy; <span data-year>{year}</span> Arbiter AI. All rights reserved.</span>
-      <span>Arbiter AI is a software vendor and does not provide medical advice or make clinical decisions.</span>
+      <span>&copy; <span data-year>{year}</span> Yoonbo Cho</span>
+      <span>Arbiter AI is software and does not provide medical advice or make clinical decisions.</span>
     </div>
   </div>
 </footer>
@@ -99,7 +109,7 @@ def render(path: str, title: str, desc: str, body: str, meta: dict | None = None
                         logo=LOGO, logo_light=LOGO_LIGHT, navlinks=links, body=body,
                         og_type=meta.get("og_type", "website"),
                         head_extra=meta.get("head", "").replace("__SITE__", SITE),
-                        year=datetime.date.today().year)
+                        year=datetime.date.today().year, short=SHORT)
 
 
 def _rfc822(iso_date: str) -> str:

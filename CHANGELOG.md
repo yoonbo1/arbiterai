@@ -3,6 +3,54 @@
 All changes from the original two zips (`hipaa-doc-ai.zip`, `arbiterai-site.zip`), with the
 reason for each. Dates are when the change was made.
 
+## 2026-09-04 — repositioning: open reference implementation
+
+Per `ARBITER_REPOSITIONING.md`: the site, README and blog now describe Arbiter as an open
+reference implementation of HIPAA-safe document AI built by one engineer, not a product.
+
+### Site
+
+- **Removed.** `pricing.html` and every link to it; the deployment tiers; SLA, uptime,
+  named-support, onsite and "we install, you operate" copy; "Request a demo", "Contact
+  sales", "Start a pilot" and the `?plan=` variants; the "How a pilot works" section; the
+  BAA promise; the shared-responsibility table and the attestations block; the contact form
+  and its `/submit` handler (`wsgi.py` no longer needs `FORM_ENDPOINT`); the mock
+  chain-of-custody ledger (job `7f3a…c21e`, tenant `northgate-clinic`). Reason: a solo
+  project cannot honestly offer any of it, and the technical readers the site is for notice.
+- **Renamed.** `product.html` → `how-it-works.html` (architecture explainer: each stage
+  with what it does, where it lives in the repo, and which eval or test covers it);
+  `security.html` is now "Security model" (five numbered invariants, each with its
+  enforcement point and its test, the superuser/RLS finding in plain words, and the honest
+  scope statement verbatim). `wsgi.py` 301s the old paths (`/product.html` →
+  `/how-it-works.html`, `/pricing.html` → `/`).
+- **Home.** H1 "Clinical document AI you can audit.", the one-liner, the four properties
+  linked to code and tests, the six use cases the implementation covers, a benchmarks table
+  with the dataset labelled on every row (synthetic marked; i2b2 2014 "not yet run"), four
+  "failure modes I found" cards linking to the post-mortems, an author strip, and a real
+  trace from the eval harness (synthetic record P00001) in place of the mock ledger.
+- **Docs.** Now the primary page: "Run it locally", "Run the evals" (what each metric
+  means, how to add gold questions), "Data" (all shipped records are synthetic; how to point
+  the harness at i2b2 2014), then the API.
+- **About / contact.** Author, why, what it is not; email and GitHub profile. No form.
+- **Global.** Nav: How it works · Security model · Docs · Blog · About. Footer: Architecture
+  · Security model · Evals · Blog · Contact, "© 2026 Yoonbo Cho", disclaimer kept. Titles,
+  meta, og and twitter descriptions carry the short form; the home page og:description
+  carries the full one-liner. First person singular throughout; "we" removed. No GitHub
+  repo link until the repo is public, and never "open-source" until then.
+- **Blog.** Four post-mortems, each ≤ 1,500 words, numbers from this changelog, code and
+  tests named by path: spaCy redacting "daily"; the flattering 0.967 recall; the 7B judge
+  and citation placement; the services connecting as the Postgres superuser.
+
+### Repository
+
+- **`README.md`** restructured per the brief: one-liner, architecture diagram, invariants
+  with enforcement and tests, quickstart, eval results table, failure modes, what it is
+  not, author. No licence yet and the repo stays private; both are the owner's call and
+  sit in the needs-you table in `TODO.md`.
+- **`TODO.md`** needs-you table: dropped the form endpoint row (no form), marked the apex
+  forwarding done (it activated 2026-09-04 and the apex 301s to www), added repo
+  visibility and licence, LinkedIn URL, Search Console, and the i2b2 2014 run.
+
 ## 2026-09-03 — first end-to-end bring-up
 
 ### Repository

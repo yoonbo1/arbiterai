@@ -4,14 +4,15 @@
 
 | what | where | what to do |
 |---|---|---|
-| Lead capture: set the form endpoint | https://formspree.io/register then https://dashboard.heroku.com/apps/arbiterai-site/settings | Create a form at Formspree, copy its endpoint (`https://formspree.io/f/xxxxxxxx`). On the Heroku page click **Reveal Config Vars**, add key `FORM_ENDPOINT`, paste the endpoint. No redeploy needed. |
 | Dyno plan | https://dashboard.heroku.com/account/billing | If you still want Eco ($5/mo, sleeps after 30 min idle), subscribe there, then tell me and I run the switch. Staying on Basic ($7/mo, never sleeps) needs nothing. |
-| Apex domain `arbiterai.tech` | https://account.squarespace.com/domains/managed/arbiterai.tech/website | Nothing to do; Squarespace forwarding activates within 24 to 48 h of 2026-09-03 05:00 UTC. Check the page shows one rule, `arbiterai.tech` to `https://www.arbiterai.tech`, permanent, forward path. If the root still shows "Coming Soon" after 2026-09-05, tell me. |
+| Apex domain `arbiterai.tech` | https://arbiterai.tech | Done: the Squarespace forwarding activated on 2026-09-04 and the apex now 301s to `https://www.arbiterai.tech`. Nothing to do. |
 | Real test data: PhysioNet credentialing | 1. https://physionet.org/settings/credentialing/  2. https://physionet.org/about/citi-course/  3. https://physionet.org/content/mimic-iv-note/2.2/ | Complete the CITI "Data or Specimens Only Research" course (affiliate as MIT to avoid fees; upload the completion *report*), submit the credentialing form, then sign the DUA at the bottom of the MIMIC-IV-Note page. In the research description, ask whether internal evaluation of a commercial product is within "scientific research". |
 | De-id recall gold sets: n2c2 | https://portal.dbmi.hms.harvard.edu/ (register), then https://n2c2.dbmi.hms.harvard.edu/data-use-agreement | Request the 2014 and 2016 de-identification tracks under the **corporate user** DUA. |
-| Site claims to confirm or remove | https://www.arbiterai.tech/security.html and https://www.arbiterai.tech/pricing.html | On Security: "Independent penetration test summary — Available" and "flow-down BAAs with all subprocessors". On Pricing: "99.9% uptime SLA". Tell me which are true; I remove the rest. |
 | Governing law in the terms | https://www.arbiterai.tech/terms.html | Ask counsel for the jurisdiction and venue; send me the wording. |
-| Team bios | https://www.arbiterai.tech/about.html | Send me names, one-line backgrounds, and photos; I add the section. |
+| Make the repo public and license it | https://github.com/yoonbo1/arbiterai/settings | Pick MIT or Apache-2.0 (tell me which; I add `LICENSE` and the badge). Then Danger Zone → Change visibility → Public. History was scanned for secrets before the first push; I will rescan before you flip it. Optionally rename to `arbiter-ai` on the same page. Once public I add the GitHub links the brief asks for. |
+| LinkedIn | send me the URL | The about page and author strip link to email and GitHub only until I have it. |
+| Search Console | https://search.google.com/search-console | Add property `www.arbiterai.tech` (DNS or HTML-tag verification; I can add the tag), then submit `https://www.arbiterai.tech/sitemap.xml`. |
+| i2b2 2014 de-identification run | https://portal.dbmi.hms.harvard.edu/ | The single most important number on the site. Request the 2014 corpus under the corporate DUA; once you have the files, tell me and I run the harness and add the row. |
 
 Everything below this table is engineering and gets done without you.
 
