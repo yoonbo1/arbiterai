@@ -33,11 +33,11 @@ correctly, that whoever runs this against real records does so under their own p
 5. Send the LinkedIn URL for the about page and author strip.
 
 ### 2. Credibility fixes a code reviewer would catch (me; days)
-6. `audit_log` is not under RLS: `app_rw` can read every tenant's rows. The security page admits it; fix it and update the page.
+6. ~~`audit_log` is not under RLS: `app_rw` can read every tenant's rows. The security page admits it; fix it and update the page.~~ Done 2026-09-05 (`tenant_isolation` policy, migration 003, probed; the blog post-mortem's "still not under RLS" callout needs updating).
 7. `job.query.completed` is written for validation-failed queries too. Record the outcome so the audit trail distinguishes a rejected answer from a delivered one.
-8. `jobs.request` stores the raw question and patient id before de-identification. This is the one gap that contradicts invariant 1 in spirit; de-identify or encrypt before persisting.
+8. ~~`jobs.request` stores the raw question and patient id before de-identification. This is the one gap that contradicts invariant 1 in spirit; de-identify or encrypt before persisting.~~ Done 2026-09-05 (`request_enc`/`result_enc` under the tenant key, migration 004; decrypted only for `GET /v1/jobs/{id}`).
 9. Escalation to the same model at temperature 0 (post-mortem 3 says it is open): skip when the tiers are identical, and make the large tier configurable to a real larger model.
-10. Plaintext `patients.external_id`, `content_hash = md5(storage_uri)`, and the `storage_uri` left behind by a failed ingest. Three small fixes, each a thing a reader of `init.sql` will notice.
+10. ~~Plaintext `patients.external_id`, `content_hash = md5(storage_uri)`, and the `storage_uri` left behind by a failed ingest. Three small fixes, each a thing a reader of `init.sql` will notice.~~ Done 2026-09-05 (keyed hash + ciphertext, migration 005; sha256 of the bytes and `storage_uri` cleared on failure, migration 006).
 11. `contains_phi` ignores dates and locations in the output check. Decide (Safe Harbor says they are identifiers) and document the decision on the security page either way.
 12. Move the custom Presidio recognizers into a delimited module and open the four upstream PRs the brief lists (labelled MRN, NANP with extension, title-anchored names, dosing-frequency date filter). Each PR is a portfolio item and links from its post.
 
@@ -84,7 +84,7 @@ with a compliance officer.
 - [ ] **Audit controls**: ship `audit_log` to WORM storage; 6-year retention; scheduled log review.
 - [ ] **Integrity**: backups with tested restore; checksum verification of stored documents.
 - [ ] **Transmission security**: TLS everywhere including between services (mTLS in-cluster); VPN or private link for tenants. Today ports are only bound to localhost.
-- [ ] **Encryption at rest**: full-disk / volume encryption; per-tenant DEKs from KMS or Vault (today `_tenant_key()` derives from an env var); encrypted object storage for source documents.
+- [ ] **Encryption at rest**: full-disk / volume encryption; per-tenant DEKs from KMS or Vault (today `worker/tenant_keys.py` derives every tenant's key from `TENANT_KEK`); encrypted object storage for source documents.
 - [ ] **De-identification**: measure recall on n2c2 / i2b2; tune thresholds; human review sample.
 - [ ] **BAAs**: signed with every tenant and every vendor.
 - [ ] **Risk analysis and policies**: written risk analysis for this system, incident response plan, workforce training, sanctions policy.
@@ -93,16 +93,16 @@ with a compliance officer.
 
 ## Code-level gaps found during bring-up
 
-- [ ] `jobs.request` stores the raw request (question text, patient external id) before de-identification, contrary to the schema comment. De-identify or encrypt before persisting.
+- [x] `jobs.request` stores the raw request (question text, patient external id) before de-identification, contrary to the schema comment. De-identify or encrypt before persisting. (2026-09-05: `request_enc`/`result_enc`, `pgp_sym_encrypt` under the tenant key; migration 004.)
 - [ ] The LangGraph Postgres checkpointer (`CHECKPOINTER=postgres`) would persist pre-de-identification text and the plaintext PHI map outside RLS. It is off by default; do not enable it with real data until checkpoint state is encrypted and tenant-scoped.
 - [ ] `storage_uri` is client-supplied and opened by the worker. It is now restricted to `DATA_ROOT`; production needs per-tenant object storage prefixes and signed access.
-- [ ] Patient `external_id` (typically an MRN) is stored in plaintext in `patients`; the schema comment says "stored encrypted at rest". Encrypt or hash it.
+- [x] Patient `external_id` (typically an MRN) is stored in plaintext in `patients`; the schema comment says "stored encrypted at rest". Encrypt or hash it. (2026-09-05: `external_id_hash` for lookups, `external_id_enc` for display; migration 005.)
 - [ ] The synthetic-data eval only exercises one document type (discharge summary). Add scans of real formats (faxes, forms, handwriting) once de-identified samples exist.
 - [ ] The small model runs on the developer's machine via Ollama bound to `0.0.0.0` for container access. Production model hosts need a private network and no LAN exposure.
 - [ ] Ollama is a bare background process, not a service, so nothing restarts it and it dies on reboot. It also crashed once with a bus error while idle after roughly 4,500 requests. If that recurs, capture the log and pin a different runner; for anything beyond local dev, run the model host as a managed service.
 - [x] De-identification recall gaps seen on synthetic data: no US street-address recognizer, cities tagged as PERSON. (Address recognizer plus union-merge added 2026-09-03; ZIP survivors 14/20 to 0/20.) Still open: the `00` prefix of `001-555-...` fax numbers, and the whole thing re-measured on n2c2 / i2b2.
-- [ ] `documents.content_hash` is `md5(storage_uri)`, not a hash of the bytes. Hash the content so dedupe and integrity checks mean something.
-- [ ] A failed ingest leaves a `documents` row containing the client-supplied `storage_uri` (seen with the path-traversal probe). Scrub or drop it.
+- [x] `documents.content_hash` is `md5(storage_uri)`, not a hash of the bytes. Hash the content so dedupe and integrity checks mean something. (2026-09-05: sha256 of the file bytes, computed by the worker before the row is inserted; migration 006.)
+- [x] A failed ingest leaves a `documents` row containing the client-supplied `storage_uri` (seen with the path-traversal probe). Scrub or drop it. (2026-09-05: a path outside `DATA_ROOT` fails before any row exists; a later failure sets `storage_uri = NULL` and the job records the reason.)
 - [ ] `env_file: .env` hands every secret to both containers (the worker receives `ADMIN_TOKEN`). Split secrets per service.
 - [ ] Application errors are not retried; only crash-mid-job redelivery is. Classify transient errors (model or embeddings unreachable) for retry with backoff.
 - [ ] The gateway's asyncpg pool does not validate connections after a Postgres restart (masked today because compose restarts the gateway). Add a connection check or `max_inactive_connection_lifetime`.
@@ -139,7 +139,7 @@ with a compliance officer.
 
 ## Found by the eval harness (synthetic data, 20 documents)
 
-- [ ] `audit_log` is not under RLS: `app_rw` can read every tenant's rows. Add a policy or a tenant-scoped view.
+- [x] `audit_log` is not under RLS: `app_rw` can read every tenant's rows. Add a policy or a tenant-scoped view. (2026-09-05: `tenant_isolation` policy plus `tenant_id NOT NULL`; migration 003; admin key events audited under the key's tenant.)
 - [ ] `job.query.completed` is written for validation-failed queries too, so the audit trail cannot distinguish a rejected answer from a delivered one. Record the outcome in `action` or `detail`.
 - [ ] Escalation re-runs the same model at temperature 0 when `LARGE_MODEL` equals `SMALL_MODEL`, which cannot change the verdict and costs 8x. Either configure a genuinely larger model for the large tier or skip escalation when the tiers are identical.
 - [ ] The grounding judge is a 7B model asked for a single number; it is sensitive to formatting. Consider claim-level checking or a calibrated threshold, and measure judge agreement on a labelled set.

@@ -91,7 +91,10 @@ services:
       start_period: 30s
 
   gateway:
-    build: ./gateway
+    # Built from platform/ rather than gateway/ so the image can copy worker/tenant_keys.py, the
+    # per-tenant key derivation both services share; platform/.dockerignore keeps everything else
+    # (.env, data/) out of the build context.
+    build: { context: ., dockerfile: gateway/Dockerfile }
     env_file: .env
     ports: ["127.0.0.1:8080:8080"]
     restart: unless-stopped

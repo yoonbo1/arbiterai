@@ -1,0 +1,10 @@
+# Build context for gateway/Dockerfile. docker-compose.yml builds the gateway from platform/
+# (not gateway/) so the image can copy worker/tenant_keys.py, the per-tenant key derivation both
+# services share. Only what that image needs is sent to the daemon; .env, data/ and everything
+# else never are. The worker and embeddings images build from their own directories, which this
+# file does not cover.
+*
+!gateway
+!worker/__init__.py
+!worker/tenant_keys.py
+**/__pycache__

@@ -1,7 +1,12 @@
 """API gateway: authenticates tenants, enqueues jobs, never runs inference inline.
 
 Connects to Postgres as the application role (app_rw), which is subject to row-level
-security; the owner role would silently bypass RLS."""
+security; the owner role would silently bypass RLS.
+
+Data at rest: the job request is encrypted under the tenant key before it is stored
+(jobs.request_enc) and the result is decrypted only here, for GET /v1/jobs/{id}, for the
+key that owns the job. Patients are addressed by a keyed hash of their external id. The key
+derivation is worker/tenant_keys.py, the same module the worker uses."""
 import asyncio, json, os, uuid
 from contextlib import asynccontextmanager
 
@@ -12,6 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 import auth
+from worker.tenant_keys import external_id_hash, tenant_key
 
 STREAM = "jobs"
 
@@ -65,10 +71,11 @@ async def enqueue(request: Request, p: auth.Principal, kind: str, payload: dict,
     job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{p.api_key_id}:{idem}")) if idem else str(uuid.uuid4())
     async with request.app.state.pool.acquire() as con, con.transaction():
         await con.execute("SELECT set_config('app.tenant_id', $1, true)", p.tenant_id)
+        # The request (question text, patient external id) is stored only as ciphertext.
         inserted = await con.fetchval(
-            """INSERT INTO jobs (id, tenant_id, api_key_id, kind, request)
-               VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING RETURNING id""",
-            job_id, p.tenant_id, p.api_key_id, kind, payload)          # dict: jsonb codec encodes it
+            """INSERT INTO jobs (id, tenant_id, api_key_id, kind, request_enc)
+               VALUES ($1,$2,$3,$4, pgp_sym_encrypt($5, $6)) ON CONFLICT (id) DO NOTHING RETURNING id""",
+            job_id, p.tenant_id, p.api_key_id, kind, json.dumps(payload), tenant_key(p.tenant_id))
         if inserted:
             await con.execute(
                 "INSERT INTO audit_log (tenant_id, api_key_id, job_id, actor, action, detail) VALUES ($1,$2,$3,$4,$5,$6)",
@@ -108,10 +115,14 @@ async def job_status(job_id: str, request: Request, p=Depends(principal)):
     job_id = _uuid(job_id, "job")
     async with request.app.state.pool.acquire() as con, con.transaction():
         await con.execute("SELECT set_config('app.tenant_id', $1, true)", p.tenant_id)
-        row = await con.fetchrow("SELECT status, result, finished_at FROM jobs WHERE id=$1", job_id)
+        # The result (re-identified answer) is decrypted here and nowhere else, for the caller
+        # RLS has already confirmed owns the job. The request is never returned.
+        row = await con.fetchrow("SELECT status, pgp_sym_decrypt(result_enc, $2) AS result, finished_at "
+                                 "FROM jobs WHERE id=$1", job_id, tenant_key(p.tenant_id))
     if not row:
         raise HTTPException(404, "job not found")   # RLS makes other tenants' jobs invisible
-    return {"job_id": job_id, "status": row["status"], "result": row["result"], "finished_at": row["finished_at"]}
+    result = json.loads(row["result"]) if row["result"] is not None else None
+    return {"job_id": job_id, "status": row["status"], "result": result, "finished_at": row["finished_at"]}
 
 
 FACT_KINDS = ("problem", "medication", "lab", "vital", "procedure", "allergy", "immunization", "referral", "plan", "other")
@@ -123,7 +134,8 @@ async def patient_facts(external_id: str, request: Request, kind: str | None = Q
                         active: bool = Query(True), limit: int = Query(500, ge=1, le=5000),
                         p=Depends(require("query"))):
     """Structured, de-identified clinical facts for one patient (the evidence-packet primitive).
-    Text is stored de-identified (<PERSON_1> placeholders); nothing is re-identified here.
+    Text is stored de-identified (<PERSON_1> placeholders); nothing is re-identified here except
+    the patient's own external id, which the caller supplied and gets back decrypted.
     active=true (default) hides facts asserted absent, family-history, conditional or possible."""
     if kind is not None and kind not in FACT_KINDS:
         raise HTTPException(422, f"kind must be one of {', '.join(FACT_KINDS)}")
@@ -137,15 +149,19 @@ async def patient_facts(external_id: str, request: Request, kind: str | None = Q
     params.append(limit); sql += f" ORDER BY page, span_start, id LIMIT ${len(params) + 1}"
     async with request.app.state.pool.acquire() as con, con.transaction():
         await con.execute("SELECT set_config('app.tenant_id', $1, true)", p.tenant_id)
-        pid = await con.fetchval("SELECT id FROM patients WHERE external_id=$1", external_id)
-        if not pid:
+        # Lookup by the keyed hash: the plaintext id is never bound to a query.
+        patient = await con.fetchrow(
+            "SELECT id, pgp_sym_decrypt(external_id_enc, $2) AS external_id FROM patients WHERE external_id_hash=$1",
+            external_id_hash(p.tenant_id, external_id), tenant_key(p.tenant_id))
+        if not patient:
             raise HTTPException(404, "patient not found")    # RLS: other tenants' patients are invisible
+        pid = patient["id"]
         rows = await con.fetch(sql, pid, *params)
         await con.execute(
             "INSERT INTO audit_log (tenant_id, api_key_id, actor, action, patient_id, detail) VALUES ($1,$2,$3,$4,$5,$6)",
             p.tenant_id, p.api_key_id, p.key_prefix, "facts.read", pid,
             {"count": len(rows), "kind": kind, "active": active, "limit": limit})
-    return {"patient_external_id": external_id, "count": len(rows), "active_only": active, "facts": [
+    return {"patient_external_id": patient["external_id"], "count": len(rows), "active_only": active, "facts": [
         {"id": r["id"], "document_id": str(r["document_id"]), "chunk_id": r["chunk_id"], "page": r["page"],
          "section": r["section"], "kind": r["kind"], "text": r["text"], "normalized": r["normalized"],
          "attributes": r["attributes"] or {}, "assertion": r["assertion"], "date_token": r["date_token"],
@@ -180,26 +196,34 @@ async def create_tenant(body: TenantCreate, request: Request):
 async def create_key(tenant_id: str, body: KeyCreate, request: Request):
     tenant_id = _uuid(tenant_id, "tenant")
     plaintext, prefix, h = auth.new_key()
-    try:
-        kid = await request.app.state.pool.fetchval(
-            """INSERT INTO api_keys (tenant_id, key_prefix, key_hash, scopes, rate_limit_per_min)
-               VALUES ($1,$2,$3,$4,$5) RETURNING id""", tenant_id, prefix, h, body.scopes, body.rate_limit_per_min)
-    except asyncpg.ForeignKeyViolationError:
-        raise HTTPException(404, "tenant not found")
-    await request.app.state.pool.execute(
-        "INSERT INTO audit_log (tenant_id, api_key_id, actor, action) VALUES ($1,$2,'admin','key.created')", tenant_id, kid)
+    # Admin actions are audited under the tenant they concern: audit_log is under RLS, so the
+    # row is written with app.tenant_id set and the tenant can read its own key lifecycle.
+    async with request.app.state.pool.acquire() as con, con.transaction():
+        await con.execute("SELECT set_config('app.tenant_id', $1, true)", tenant_id)
+        try:
+            kid = await con.fetchval(
+                """INSERT INTO api_keys (tenant_id, key_prefix, key_hash, scopes, rate_limit_per_min)
+                   VALUES ($1,$2,$3,$4,$5) RETURNING id""", tenant_id, prefix, h, body.scopes, body.rate_limit_per_min)
+        except asyncpg.ForeignKeyViolationError:
+            raise HTTPException(404, "tenant not found")
+        await con.execute(
+            "INSERT INTO audit_log (tenant_id, api_key_id, actor, action) VALUES ($1,$2,'admin','key.created')", tenant_id, kid)
     return {"key_id": str(kid), "api_key": plaintext, "note": "Shown once. Store securely."}
 
 
 @app.delete("/admin/keys/{key_id}", dependencies=[Depends(admin)])
 async def revoke_key(key_id: str, request: Request):
     key_id = _uuid(key_id, "key")
-    row = await request.app.state.pool.fetchrow(
-        "UPDATE api_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL RETURNING tenant_id, key_hash", key_id)
+    async with request.app.state.pool.acquire() as con, con.transaction():
+        row = await con.fetchrow(
+            "UPDATE api_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL RETURNING tenant_id, key_hash", key_id)
+        if row:
+            await con.execute("SELECT set_config('app.tenant_id', $1, true)", str(row["tenant_id"]))
+            await con.execute(
+                "INSERT INTO audit_log (tenant_id, api_key_id, actor, action) VALUES ($1,$2,'admin','key.revoked')",
+                row["tenant_id"], key_id)
     if row:
         await request.app.state.redis.delete(f"key:{row['key_hash']}")
-        await request.app.state.pool.execute(
-            "INSERT INTO audit_log (tenant_id, api_key_id, actor, action) VALUES ($1,$2,'admin','key.revoked')", row["tenant_id"], key_id)
     return {"revoked": bool(row)}
 
 

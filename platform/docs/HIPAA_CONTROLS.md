@@ -6,10 +6,10 @@ Not legal advice. Review with a compliance officer before processing real PHI.
 |---|---|---|
 | Unique user identification | Per-tenant API keys with IDs, scopes, prefixes in logs | MFA + SSO for admin console; named human users behind each key |
 | Access control / minimum necessary | Scopes, RLS, patient-level retrieval filter, de-identified vector store | Role review process; separate `cohort` scope only for population roles |
-| Audit controls | Append-only `audit_log`, per-job accounting, `REVOKE UPDATE/DELETE` | Ship logs to WORM storage; 6-year retention; regular log review |
-| Integrity | Content hashes on documents, idempotent jobs | Backups with tested restore; checksum verification |
+| Audit controls | Append-only `audit_log` (`REVOKE UPDATE/DELETE` from the app role) under the same `tenant_isolation` RLS policy as the PHI tables, so a tenant session reads and writes only its own rows; per-job accounting | Ship logs to WORM storage; 6-year retention; regular log review |
+| Integrity | `documents.content_hash` = SHA-256 of the file bytes (same bytes = one document); idempotent jobs; a failed ingest keeps no client-supplied path | Backups with tested restore; checksum verification against the stored hash |
 | Transmission security | Ports bound to localhost | TLS everywhere (mTLS inside cluster), VPN/private link for tenants |
-| Encryption at rest | `pgp_sym_encrypt` for PHI token map (per-tenant key) | Full-disk/volume encryption; KMS/Vault for tenant DEKs; encrypted object storage |
+| Encryption at rest | `pgp_sym_encrypt` under a per-tenant key (`worker/tenant_keys.py`, shared by worker and gateway) for the PHI token map, the job request and result, and the patient external id (looked up by a keyed HMAC-SHA256); no table holds a plaintext identifier | Full-disk/volume encryption; KMS/Vault for tenant DEKs (today derived from `TENANT_KEK`); encrypted object storage |
 | De-identification | Presidio + MRN recognizer, leak check on outputs | Measure recall on n2c2/i2b2; tune thresholds; human review sample |
 | Business associate agreements | `baa_signed_at` gates a tenant | Signed BAAs with every tenant *and* every vendor (cloud, GPU host, monitoring) |
 | Risk analysis & policies | — | Written risk analysis covering this system, incident response plan, workforce training, sanctions policy |

@@ -1,5 +1,11 @@
 -- HIPAA-oriented schema. Every PHI-bearing table carries tenant_id and is
 -- protected by row-level security so the database itself enforces isolation.
+--
+-- At rest, everything that could identify a person is either de-identified text (chunks,
+-- clinical_facts) or ciphertext under the tenant key (phi_tokens.value_enc, jobs.request_enc,
+-- jobs.result_enc, patients.external_id_enc; pgp_sym_encrypt, key derived in
+-- worker/tenant_keys.py, shared by the worker and the gateway). Patient lookups go through a
+-- keyed hash. No table holds a plaintext identifier.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -30,12 +36,15 @@ CREATE INDEX ON api_keys(tenant_id);
 
 -- ---------- PHI-bearing tables ----------
 CREATE TABLE patients (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id   uuid NOT NULL REFERENCES tenants(id),
-  external_id text NOT NULL,                       -- tenant's MRN; stored encrypted at rest
-  cluster_id  int,                                 -- cohort assignment, recomputed offline
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, external_id)
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        uuid NOT NULL REFERENCES tenants(id),
+  external_id_hash text NOT NULL,                  -- HMAC-SHA256 (hex) of the tenant's MRN under a key derived
+                                                   -- from the tenant key; every lookup by external id uses it
+  external_id_enc  bytea NOT NULL,                 -- pgp_sym_encrypt(MRN, tenant key); decrypted only to hand
+                                                   -- the id back to the caller that presented it
+  cluster_id       int,                            -- cohort assignment, recomputed offline
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, external_id_hash)
 );
 
 CREATE TABLE documents (
@@ -43,8 +52,10 @@ CREATE TABLE documents (
   tenant_id    uuid NOT NULL REFERENCES tenants(id),
   patient_id   uuid NOT NULL REFERENCES patients(id),
   doc_type     text,                               -- discharge_summary, radiology, lab, ...
-  storage_uri  text NOT NULL,                      -- encrypted object store path
-  content_hash text NOT NULL,                      -- dedupe / embedding cache key
+  storage_uri  text,                               -- path in the tenant's encrypted object store; cleared
+                                                   -- when an ingest fails (the job records the failure)
+  content_hash text NOT NULL,                      -- sha256 (hex) of the file bytes, computed by the worker
+                                                   -- before the row exists: same bytes = same document
   status       text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','processing','indexed','failed')),
   pages        int,
   created_at   timestamptz NOT NULL DEFAULT now(),
@@ -81,8 +92,10 @@ CREATE TABLE jobs (
   api_key_id    uuid NOT NULL,
   kind          text NOT NULL CHECK (kind IN ('ingest','query','cohort')),
   status        text NOT NULL DEFAULT 'queued',
-  request       jsonb NOT NULL,                    -- de-identified before persisting
-  result        jsonb,
+  request_enc   bytea NOT NULL,                    -- pgp_sym_encrypt(json request, tenant key): the raw
+                                                   -- question and patient id are never stored in clear
+  result_enc    bytea,                             -- pgp_sym_encrypt(json result, tenant key): the
+                                                   -- re-identified answer, decrypted only by GET /v1/jobs/{id}
   tokens_small  int DEFAULT 0,
   tokens_large  int DEFAULT 0,
   cost_cents    numeric(10,4) DEFAULT 0,
@@ -91,14 +104,17 @@ CREATE TABLE jobs (
 );
 CREATE INDEX ON jobs (tenant_id, created_at DESC);
 
--- ---------- Audit (append-only) ----------
+-- ---------- Audit (append-only, tenant-scoped) ----------
+-- Every row belongs to a tenant (admin key actions are recorded under the tenant the key
+-- belongs to); events with no tenant go to the service logs, not here. The tenant_isolation
+-- policy below scopes SELECT and INSERT to app.tenant_id like every PHI table.
 CREATE TABLE audit_log (
   id          bigserial PRIMARY KEY,
   ts          timestamptz NOT NULL DEFAULT now(),
-  tenant_id   uuid,
+  tenant_id   uuid NOT NULL,
   api_key_id  uuid,
   job_id      uuid,
-  actor       text NOT NULL,                       -- key prefix or 'system'
+  actor       text NOT NULL,                       -- key prefix, 'worker' or 'admin'
   action      text NOT NULL,                       -- key.created, doc.ingested, phi.accessed ...
   patient_id  uuid,
   detail      jsonb
@@ -112,10 +128,11 @@ ALTER TABLE documents  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chunks     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE phi_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE jobs       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log  ENABLE ROW LEVEL SECURITY;
 
 DO $$ DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['patients','documents','chunks','phi_tokens','jobs'] LOOP
+  FOREACH t IN ARRAY ARRAY['patients','documents','chunks','phi_tokens','jobs','audit_log'] LOOP
     EXECUTE format(
       'CREATE POLICY tenant_isolation ON %I USING (tenant_id = current_setting(''app.tenant_id'', true)::uuid)
        WITH CHECK (tenant_id = current_setting(''app.tenant_id'', true)::uuid)', t);
@@ -131,7 +148,8 @@ GRANT USAGE ON SCHEMA public TO app_rw;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO app_rw;
 -- Re-ingest of the same document replaces its derived rows.
 GRANT DELETE ON chunks, phi_tokens TO app_rw;
--- audit_log is append-only for the application role (the blanket grant above included UPDATE).
+-- audit_log is append-only for the application role (the blanket grant above included UPDATE);
+-- with the policy above it is also read and written per tenant.
 REVOKE UPDATE, DELETE ON audit_log FROM app_rw;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO app_rw;
 -- No CREATE on schema public: the app never creates tables. The optional LangGraph

@@ -3,6 +3,81 @@
 All changes from the original two zips (`hipaa-doc-ai.zip`, `arbiterai-site.zip`), with the
 reason for each. Dates are when the change was made.
 
+## 2026-09-05 — data at rest and audit isolation
+
+### Platform — data at rest
+
+Three gaps a reader of `db/init.sql` would have caught, closed and probed against the live
+stack (TODO items 6, 8, 10). Migrations `003`–`006` apply to an existing database with
+`make migrate` and are no-ops on a fresh one; the second run is a no-op on both.
+
+- **`audit_log` under row-level security** (`db/init.sql`, `db/migrations/003_audit_log_rls.sql`).
+  The table was append-only but `app_rw` could `SELECT` every tenant's rows. It now carries the
+  same `tenant_isolation` policy as the PHI tables (`USING` and `WITH CHECK` on
+  `app.tenant_id`) and `tenant_id` is `NOT NULL`: every row belongs to a tenant. Every writer
+  was traced: the gateway's job submit and facts read and the worker's job completion already
+  ran with the tenant set; the two admin inserts (`key.created`, `key.revoked`) ran on the bare
+  pool with no tenant and would have failed the policy, so they now run in a transaction with
+  `app.tenant_id` set to the tenant the key belongs to (the tenant can read its own key
+  lifecycle). Decision: no tenant-less rows, so no NULL-tenant policy; a system event with no
+  tenant goes to the service logs. The `REVOKE UPDATE, DELETE` stays. Probed as `app_rw`
+  with `app.tenant_id = A`: 0 of B's 8 rows visible, all 988 of A's; `INSERT` for B → "new row
+  violates row-level security policy"; `UPDATE`/`DELETE` → permission denied.
+- **Job payloads encrypted** (`db/migrations/004_jobs_encrypt.sql`, `gateway/main.py`,
+  `worker/store.py`, `worker/main.py`). `jobs.request` held the raw question and patient
+  external id before de-identification and `jobs.result` the re-identified answer, both
+  plaintext `jsonb` despite the schema comment. Both columns are gone; `request_enc` and
+  `result_enc` are `bytea` from `pgp_sym_encrypt` under the tenant key, the key already used
+  for `phi_tokens.value_enc`. The gateway encrypts on submit and decrypts the result only for
+  `GET /v1/jobs/{id}`, for the key RLS has already matched to the job; the worker decrypts
+  the request in `store.get_job` and encrypts the result and any failure reason. The eval
+  harness now counts escalations from the API response instead of reading `result` from the
+  table. Legacy dev rows were not re-encrypted (psql has no key; synthetic data only); the
+  migration says so and leaves `request_enc` nullable while such rows remain.
+- **One key derivation for both services** (`worker/tenant_keys.py`, new). The worker derived
+  the tenant key in a private `store._tenant_key`; the gateway now needs the same key, so the
+  derivation (`TENANT_KEK + tenant_id`, unchanged) moved to a standard-library-only module both
+  import. The gateway image is built from `platform/` (`docker-compose.yml`
+  `build: { context: ., dockerfile: gateway/Dockerfile }`) so it can copy that one file;
+  `platform/.dockerignore` sends nothing else (`.env`, `data/` never enter the context).
+  `tests/test_tenant_keys.py` pins that both services import the module rather than a copy.
+- **Patient external id hashed and encrypted** (`db/migrations/005_patients_external_id.sql`).
+  `patients.external_id` (an MRN) was plaintext. Replaced by `external_id_hash`, an HMAC-SHA256
+  under a key derived from the tenant key (domain-separated, so the same MRN hashes differently
+  per tenant and a dump cannot be joined to a list of MRNs), used by every lookup (ingest,
+  query, `GET /v1/patients/{id}/facts`, the extraction eval), and `external_id_enc`
+  (`pgp_sym_encrypt`), decrypted only to hand the id back to the caller that presented it.
+  The dev rows could not be converted without the key, so the migration drops the legacy
+  patient rows and their documents (synthetic) and `make eval` re-ingests; a real deployment
+  would backfill from a process holding the key. `eval/run_extraction_eval.py` reads
+  `TENANT_KEK` from the environment or `platform/.env` to hash the manifest ids.
+- **`content_hash` is a hash of the bytes**
+  (`db/migrations/006_documents_hash_and_failed_ingest.sql`, `worker/main.py`,
+  `store.sha256_file` / `store.upsert_document`). It was `md5(storage_uri)`. The worker now
+  hashes the file before any row exists, so `UNIQUE (tenant_id, content_hash)` means "the same
+  bytes are one document": a re-ingest or a retry after a failure reuses the row; new bytes at a
+  known path are a new version of that document and reuse its row too. Verified: the stored
+  value equals `shasum -a 256` of the file on the host.
+- **A failed ingest leaves no client-supplied path behind.** `documents.storage_uri` is
+  nullable; on failure the row is marked `failed` with `storage_uri = NULL` and the reason is
+  recorded on the job (`result_enc`). A path outside `DATA_ROOT` now fails before any row
+  exists (no patient, no document). Probed: `/etc/passwd` → job `failed`
+  `{"error": "PermissionError"}`, no `documents` row; a zero-byte file → `EmptyFileError`,
+  row `failed` with `storage_uri NULL`.
+- **Tests** (`tests/test_tenant_keys.py`, `test_gateway_jobs.py`, `test_store.py`,
+  `test_schema.py`; `test_gateway_facts.py` updated): 167 passed, 2 skipped, 2 xfailed
+  (was 130). `test_schema.py` reads `init.sql` and the migrations: no plaintext
+  `request`/`result`/`external_id` column, `audit_log` in the policy list, and no SQL literal
+  in the services names an old column.
+- **End to end after migrating and rebuilding**, `make eval LIMIT=3`: 3 documents, 6 queries,
+  accuracy 1.0, 0 cross-patient leaks, 0 validation failures, p50 3.6 s. Whole-string de-id
+  recall 0.944 = the one known survivor (P00001's scan, where Tesseract reads `MRN:` as `MAN:`;
+  TODO item 14, unchanged by this work). `GET /v1/jobs/{id}`: 200 with the decrypted answer
+  for the owning key, 404 for key B; the facts endpoint: 200 and the decrypted id for key A,
+  404 for key B.
+- **Docs.** `docs/HIPAA_CONTROLS.md` rows for audit controls, integrity and encryption at rest;
+  README invariants table (audit-log row); `.env.example` says what `TENANT_KEK` now covers.
+
 ## 2026-09-04 — repositioning: open reference implementation
 
 Per `ARBITER_REPOSITIONING.md`: the site, README and blog now describe Arbiter as an open

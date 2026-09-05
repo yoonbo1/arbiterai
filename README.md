@@ -38,7 +38,7 @@ question ─► de-identify ─► retrieval scoped to (tenant, patient)     wor
 | The PHI map never enters the vector store | map encrypted with `pgp_sym_encrypt` into `phi_tokens`; chunks hold placeholders only (`worker/store.py`) | `deid_recall_strict` scans every stored chunk for every injected identifier |
 | Retrieval is hard-filtered on patient | `WHERE tenant_id=… AND patient_id=…` in `worker/retrieval.py`, on top of row-level security | `test_query_is_hard_filtered_by_tenant_and_patient`; `cross_patient_leaks` = 0 in every eval run |
 | Tenant identity comes from the credential, never a client field | HMAC-SHA256 key lookup in `gateway/auth.py`; `app.tenant_id` set transaction-locally; app connects as `app_rw`, a role RLS applies to | `tests/test_auth.py`; cross-tenant probes (key B → 404 on tenant A's job) |
-| The audit log is append-only | `REVOKE UPDATE, DELETE ON audit_log FROM app_rw` in `db/init.sql` | verified: UPDATE/DELETE as `app_rw` → permission denied |
+| The audit log is append-only and tenant-scoped | `REVOKE UPDATE, DELETE ON audit_log FROM app_rw` and the `tenant_isolation` RLS policy on `audit_log` in `db/init.sql` (`db/migrations/003_audit_log_rls.sql` for existing databases) | verified as `app_rw` with `app.tenant_id` = A: UPDATE/DELETE → permission denied; 0 of tenant B's rows visible, all of A's; INSERT for B → policy violation (`tests/test_schema.py` pins the policy) |
 
 The superuser finding, in plain words: the services originally connected as the Postgres
 owner, which bypasses row-level security, so the isolation the code described did not exist.

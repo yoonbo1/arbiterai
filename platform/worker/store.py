@@ -1,6 +1,11 @@
 """Postgres/pgvector persistence. Every connection sets app.tenant_id so RLS applies.
-The pool is created lazily so importing this module (e.g. in tests) needs no database."""
-import json, os, threading
+The pool is created lazily so importing this module (e.g. in tests) needs no database.
+
+What is encrypted at rest, all under the tenant key from worker/tenant_keys.py (shared with the
+gateway): the PHI map (phi_tokens.value_enc), the job request and result (jobs.request_enc,
+jobs.result_enc) and the patient's external id (patients.external_id_enc, looked up through the
+keyed hash in external_id_hash). Chunks and clinical facts hold de-identified text only."""
+import hashlib, json, os, threading
 from contextlib import contextmanager
 
 import httpx
@@ -9,6 +14,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from . import llm
+from .tenant_keys import external_id_hash, tenant_key
 
 EMBED_URL = (os.environ.get("EMBED_URL") or "http://embeddings:80").rstrip("/")
 EMBED_DIM = 384          # chunks.embedding is vector(384); change both together
@@ -136,10 +142,79 @@ def index_document(*, tenant_id, patient_id, document_id, pages, texts, phi_map,
         cur.executemany(
             "INSERT INTO phi_tokens (tenant_id, document_id, token, entity_type, value_enc) "
             "VALUES (%s,%s,%s,%s, pgp_sym_encrypt(%s, %s)) ON CONFLICT DO NOTHING",
-            [(tenant_id, document_id, tok, tok.strip("<>").rsplit("_", 1)[0], val, _tenant_key(tenant_id))
+            [(tenant_id, document_id, tok, tok.strip("<>").rsplit("_", 1)[0], val, tenant_key(tenant_id))
              for tok, val in phi_map.items()])
         cur.execute("UPDATE documents SET status='indexed', pages=%s WHERE id=%s", (len(pages), document_id))
     return len(rows)
+
+
+def sha256_file(path) -> str:
+    """SHA-256 (hex) of a file's bytes: documents.content_hash. The same bytes under two paths are
+    one document; the same path with new bytes is a new version of it."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def upsert_patient(con, tenant_id: str, external_id: str) -> str:
+    """Find or create the tenant's patient. The lookup key is the keyed hash of the external id;
+    the id itself is stored encrypted and only ever decrypted to hand back to the caller."""
+    return str(con.execute(
+        "INSERT INTO patients (tenant_id, external_id_hash, external_id_enc) "
+        "VALUES (%s, %s, pgp_sym_encrypt(%s, %s)) "
+        "ON CONFLICT (tenant_id, external_id_hash) DO UPDATE SET external_id_hash=EXCLUDED.external_id_hash "
+        "RETURNING id",
+        (tenant_id, external_id_hash(tenant_id, external_id), external_id, tenant_key(tenant_id))).fetchone()[0])
+
+
+def upsert_document(con, *, tenant_id: str, patient_id: str, doc_type: str | None,
+                    storage_uri: str, content_hash: str) -> str:
+    """The documents row for an ingest, marked processing. Identity is the content hash: the same
+    bytes, under any path or left behind by a failed attempt, reuse the row, so re-ingest replaces
+    the derived rows (index_document deletes them first) instead of duplicating them. New bytes at
+    a path this tenant already ingested are a new version of that document and reuse its row."""
+    row = con.execute("SELECT id FROM documents WHERE tenant_id=%s AND content_hash=%s",
+                      (tenant_id, content_hash)).fetchone()
+    if row is None:
+        row = con.execute("SELECT id FROM documents WHERE tenant_id=%s AND storage_uri=%s",
+                          (tenant_id, storage_uri)).fetchone()
+    if row is not None:
+        con.execute("UPDATE documents SET status='processing', patient_id=%s, doc_type=%s, storage_uri=%s, "
+                    "content_hash=%s WHERE id=%s", (patient_id, doc_type, storage_uri, content_hash, row[0]))
+        return str(row[0])
+    return str(con.execute(
+        "INSERT INTO documents (tenant_id, patient_id, doc_type, storage_uri, content_hash, status) "
+        "VALUES (%s,%s,%s,%s,%s,'processing') RETURNING id",
+        (tenant_id, patient_id, doc_type, storage_uri, content_hash)).fetchone()[0])
+
+
+def fail_document(tenant_id: str, document_id: str) -> None:
+    """A failed ingest keeps nothing client-supplied on the documents row: status failed and the
+    storage_uri cleared. The failure itself is recorded on the job (fail_job)."""
+    with tenant_conn(tenant_id) as con:
+        con.execute("UPDATE documents SET status='failed', storage_uri=NULL WHERE id=%s", (document_id,))
+
+
+def get_job(job_id: str, tenant_id: str) -> dict | None:
+    """Load a job for processing and mark it so. The request is decrypted here, under RLS, with
+    the tenant's key. None when no such job is visible for this tenant; request None when the row
+    predates jobs.request_enc (migration 004) and cannot be read."""
+    with tenant_conn(tenant_id) as con:
+        row = con.execute("SELECT api_key_id, kind, pgp_sym_decrypt(request_enc, %s) FROM jobs WHERE id=%s",
+                          (tenant_key(tenant_id), job_id)).fetchone()
+        if row is None:
+            return None
+        con.execute("UPDATE jobs SET status='processing' WHERE id=%s", (job_id,))
+    return {"api_key_id": str(row[0]), "kind": row[1], "request": json.loads(row[2]) if row[2] is not None else None}
+
+
+def fail_job(job_id: str, tenant_id: str, reason: str) -> None:
+    """Record a failure on the job, encrypted like any other result. Never overwrites a finished job."""
+    with tenant_conn(tenant_id) as con:
+        con.execute("UPDATE jobs SET status='failed', result_enc=pgp_sym_encrypt(%s, %s), finished_at=now() "
+                    "WHERE id=%s AND status<>'done'", (json.dumps({"error": reason}), tenant_key(tenant_id), job_id))
 
 
 def decrypt_tokens(tenant_id: str, document_id: str, tokens: list[str]) -> dict[str, str]:
@@ -151,27 +226,22 @@ def decrypt_tokens(tenant_id: str, document_id: str, tokens: list[str]) -> dict[
         rows = con.execute(
             "SELECT token, pgp_sym_decrypt(value_enc, %s) FROM phi_tokens "
             "WHERE document_id=%s AND token = ANY(%s)",
-            (_tenant_key(tenant_id), document_id, list(tokens))).fetchall()
+            (tenant_key(tenant_id), document_id, list(tokens))).fetchall()
     return {t: v for t, v in rows}
 
 
-def _tenant_key(tenant_id: str) -> str:
-    # Local dev: derive from env. Prod: fetch per-tenant DEK from KMS/Vault, cached briefly.
-    kek = os.environ.get("TENANT_KEK")
-    if not kek:
-        raise RuntimeError("TENANT_KEK is not set; refusing to encrypt the PHI map with a default key")
-    return kek + tenant_id
-
-
 def audit(state: dict) -> None:
+    """Finish the job (result encrypted under the tenant key; the re-identified answer is only
+    ever decrypted by the gateway for the caller) and write the audit row, both under RLS."""
     usage = state.get("usage", {})
+    result = {"answer": state.get("answer"), "validation": state.get("validation"),
+              "citations": [c["id"] for c in state.get("chunks", [])],
+              "errors": state.get("errors") or []}
     with tenant_conn(state["tenant_id"]) as con:
         con.execute(
-            "UPDATE jobs SET status=%s, result=%s, tokens_small=%s, tokens_large=%s, cost_cents=%s, finished_at=now() WHERE id=%s",
-            ("failed" if state.get("errors") else "done",
-             Jsonb({"answer": state.get("answer"), "validation": state.get("validation"),
-                    "citations": [c["id"] for c in state.get("chunks", [])],
-                    "errors": state.get("errors") or []}),
+            "UPDATE jobs SET status=%s, result_enc=pgp_sym_encrypt(%s, %s), tokens_small=%s, tokens_large=%s, "
+            "cost_cents=%s, finished_at=now() WHERE id=%s",
+            ("failed" if state.get("errors") else "done", json.dumps(result), tenant_key(state["tenant_id"]),
              usage.get("small", 0), usage.get("large", 0), llm.cost_cents(usage), state["job_id"]))
         con.execute(
             "INSERT INTO audit_log (tenant_id, api_key_id, job_id, actor, action, patient_id, detail) "

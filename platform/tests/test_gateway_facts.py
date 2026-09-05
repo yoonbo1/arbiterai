@@ -1,5 +1,7 @@
 """GET /v1/patients/{external_id}/facts on the FastAPI app with the asyncpg pool replaced by a
-recording fake and the principal dependency overridden (no network, no database)."""
+recording fake and the principal dependency overridden (no network, no database). The patient
+is looked up by the keyed hash of the external id; the id handed back comes from the decrypted
+column, not from the URL."""
 from contextlib import asynccontextmanager
 
 import pytest
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import auth  # noqa: E402
 import main as gateway  # noqa: E402
+from worker.tenant_keys import external_id_hash, tenant_key  # noqa: E402
 
 PID = "33333333-3333-4333-8333-333333333333"
 ROWS = [
@@ -26,6 +29,7 @@ ROWS = [
 class FakeCon:
     def __init__(self, patient_id, rows):
         self.patient_id, self.rows, self.calls = patient_id, rows, []
+        self.external_id = "P00000"           # what pgp_sym_decrypt(external_id_enc, key) yields
 
     @asynccontextmanager
     async def transaction(self):
@@ -34,9 +38,9 @@ class FakeCon:
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
 
-    async def fetchval(self, sql, *args):
-        self.calls.append(("fetchval", sql, args))
-        return self.patient_id
+    async def fetchrow(self, sql, *args):
+        self.calls.append(("fetchrow", sql, args))
+        return {"id": self.patient_id, "external_id": self.external_id} if self.patient_id else None
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
@@ -73,8 +77,13 @@ def test_facts_default_is_active_only(client):
     assert j["facts"][0] == {**ROWS[0], "document_id": ROWS[0]["document_id"]}
     assert j["facts"][1]["attributes"] == {}                       # NULL attributes -> {}
     kinds = [k for k, *_ in con.calls]
-    assert kinds == ["execute", "fetchval", "fetch", "execute"]
+    assert kinds == ["execute", "fetchrow", "fetch", "execute"]
     assert con.calls[0][1].startswith("SELECT set_config('app.tenant_id'") and con.calls[0][2] == ("tenant-1",)
+    lookup_sql, lookup_args = con.calls[1][1], con.calls[1][2]
+    assert "FROM patients WHERE external_id_hash=$1" in lookup_sql
+    assert "pgp_sym_decrypt(external_id_enc, $2)" in lookup_sql
+    assert lookup_args == (external_id_hash("tenant-1", "P00000"), tenant_key("tenant-1"))
+    assert "P00000" not in lookup_args and "P00000" not in lookup_sql   # only the keyed hash reaches SQL
     fetch_sql, fetch_args = con.calls[2][1], con.calls[2][2]
     assert "WHERE patient_id=$1" in fetch_sql and "NOT (assertion = ANY($2::text[]))" in fetch_sql
     assert fetch_args == (PID, ["absent", "family", "conditional", "possible"], 500)
@@ -103,7 +112,14 @@ def test_facts_unknown_patient_is_404_and_not_audited(client):
     con.patient_id = None
     r = c.get("/v1/patients/NOPE/facts", headers={"Authorization": "Bearer x"})
     assert r.status_code == 404
-    assert [k for k, *_ in con.calls] == ["execute", "fetchval"]
+    assert [k for k, *_ in con.calls] == ["execute", "fetchrow"]
+
+
+def test_facts_returns_the_decrypted_external_id_from_the_row(client):
+    c, con = client
+    con.external_id = "MRN-FROM-DB"
+    r = c.get("/v1/patients/P00000/facts", headers={"Authorization": "Bearer x"})
+    assert r.status_code == 200 and r.json()["patient_external_id"] == "MRN-FROM-DB"
 
 
 def test_facts_requires_query_scope(client):

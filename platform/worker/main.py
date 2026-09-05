@@ -9,9 +9,8 @@ Logs never contain PHI: only job ids, kinds, exception class names and timings."
 import os, signal, socket, time, traceback
 
 import redis
-from psycopg.types.json import Jsonb
 
-from . import annotate, graph, store
+from . import annotate, extract, graph, store
 
 STREAM, GROUP = "jobs", "workers"
 CONSUMER = f"{socket.gethostname()}-{os.getpid()}"
@@ -58,42 +57,26 @@ def make_checkpointer(kind: str | None):
     raise ValueError(f"unknown CHECKPOINTER {kind!r} (none|memory|postgres)")
 
 
-def _job(job_id: str, tenant_id: str) -> dict | None:
-    with store.tenant_conn(tenant_id) as con:
-        row = con.execute("SELECT api_key_id, kind, request FROM jobs WHERE id=%s", (job_id,)).fetchone()
-        if row is None:
-            return None
-        con.execute("UPDATE jobs SET status='processing' WHERE id=%s", (job_id,))
-    return {"api_key_id": str(row[0]), "kind": row[1], "request": row[2]}
-
-
-def _patient(con, tenant_id: str, external_id: str) -> str:
-    return str(con.execute(
-        "INSERT INTO patients (tenant_id, external_id) VALUES (%s,%s) "
-        "ON CONFLICT (tenant_id, external_id) DO UPDATE SET external_id=EXCLUDED.external_id RETURNING id",
-        (tenant_id, external_id)).fetchone()[0])
-
-
 def handle(job_id: str, tenant_id: str, ingest_app, query_app) -> str:
-    j = _job(job_id, tenant_id)
+    j = store.get_job(job_id, tenant_id)            # decrypts the request under the tenant key
     if j is None:
         raise JobNotVisible(job_id)
     req = j["request"]
+    if not req:
+        raise ValueError("job has no readable request")     # row from before jobs.request_enc
     base = {"job_id": job_id, "tenant_id": tenant_id, "api_key_id": j["api_key_id"], "kind": j["kind"]}
     cfg = {"configurable": {"thread_id": job_id}}          # harmless without a checkpointer
-    doc_id = None
+    doc_id = content_hash = None
+    if j["kind"] == "ingest":
+        # Hash the bytes before any row exists: a document's identity is its content, not the
+        # client's path, and a file that cannot be opened (missing, or outside DATA_ROOT) fails
+        # the job right here without ever creating a documents row.
+        content_hash = store.sha256_file(extract.resolve_storage_uri(req["storage_uri"]))
     with store.tenant_conn(tenant_id) as con:
-        pid = _patient(con, tenant_id, req["patient_external_id"])
+        pid = store.upsert_patient(con, tenant_id, req["patient_external_id"])
         if j["kind"] == "ingest":
-            # Same storage_uri for the same tenant = same document: reuse its id so re-ingest
-            # replaces the derived rows instead of orphaning a never-inserted doc_id.
-            doc_id = str(con.execute(
-                "INSERT INTO documents (tenant_id, patient_id, doc_type, storage_uri, content_hash, status) "
-                "VALUES (%s,%s,%s,%s,md5(%s),'processing') "
-                "ON CONFLICT (tenant_id, content_hash) DO UPDATE "
-                "SET status='processing', patient_id=EXCLUDED.patient_id, doc_type=EXCLUDED.doc_type "
-                "RETURNING id",
-                (tenant_id, pid, req.get("doc_type"), req["storage_uri"], req["storage_uri"])).fetchone()[0])
+            doc_id = store.upsert_document(con, tenant_id=tenant_id, patient_id=pid, doc_type=req.get("doc_type"),
+                                           storage_uri=req["storage_uri"], content_hash=content_hash)
     try:
         if j["kind"] == "ingest":
             ingest_app.invoke({**base, "patient_id": pid, "storage_uri": req["storage_uri"],
@@ -105,17 +88,14 @@ def handle(job_id: str, tenant_id: str, ingest_app, query_app) -> str:
             raise ValueError(f"unsupported job kind {j['kind']!r}")
     except Exception:
         if doc_id:
-            with store.tenant_conn(tenant_id) as con:
-                con.execute("UPDATE documents SET status='failed' WHERE id=%s", (doc_id,))
+            store.fail_document(tenant_id, doc_id)   # status failed, storage_uri cleared; the job records why
         raise
     return j["kind"]
 
 
 def _mark_failed(job_id: str, tenant_id: str, reason: str) -> None:
     try:
-        with store.tenant_conn(tenant_id) as con:
-            con.execute("UPDATE jobs SET status='failed', result=%s, finished_at=now() WHERE id=%s AND status<>'done'",
-                        (Jsonb({"error": reason}), job_id))
+        store.fail_job(job_id, tenant_id, reason)
     except Exception as e:           # DB down: log and move on, never kill the loop
         _log(f"{job_id} could not be marked failed: {type(e).__name__}")
 

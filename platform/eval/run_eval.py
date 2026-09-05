@@ -61,7 +61,7 @@ def main():
     parts = [(p, part.strip()) for p in phi for part in p.split(",") if len(part.strip()) >= 4]
     leaked_parts = sorted({part for _, part in parts if part in text})
     # 3) gold questions
-    lat, correct, lenient, leaks, failed = [], 0, 0, 0, 0
+    lat, correct, lenient, leaks, failed, esc = [], 0, 0, 0, 0, 0
     query_jobs = []
     for r in recs:
         for qa in r["gold_qa"]:
@@ -70,18 +70,21 @@ def main():
             res, dt = wait(jid); lat.append(dt)
             ans = (res.get("result") or {}).get("answer") or ""
             failed += res.get("status") != "done"           # validation rejected every attempt
+            # jobs.result_enc is ciphertext in the database; the gateway decrypts it for the owning
+            # key, so escalations are counted from the API response, not from the table.
+            esc += int(((res.get("result") or {}).get("validation") or {}).get("attempts") or 0) > 1
             gold = [g.strip() for g in qa["a"].split(";")]
             correct += gold[0].lower() in ans.lower()         # strict: first gold item verbatim
             # lenient: every gold item's first two tokens (drug + dose, or the lab value) appear
             lenient += all(" ".join(g.split()[:2]).lower() in ans.lower() for g in gold)
             leaks += any(p in ans for o in recs if o is not r for p in o["injected_phi"])  # cross-patient leak
     n = sum(len(r["gold_qa"]) for r in recs)
-    # 4) per-job accounting for this run (jobs is under RLS; app.tenant_id is still set)
+    # 4) per-job accounting for this run (jobs is under RLS; app.tenant_id is still set). Only the
+    #    plaintext accounting columns are read; request_enc / result_enc stay sealed.
     with psycopg.connect(os.environ["DATABASE_URL"]) as con:
         con.execute("SELECT set_config('app.tenant_id', %s, false)", (os.environ["TENANT_ID"],))
-        ts, tl, cents, esc = con.execute(
-            """SELECT coalesce(sum(tokens_small),0), coalesce(sum(tokens_large),0), coalesce(sum(cost_cents),0),
-                      count(*) FILTER (WHERE (result->'validation'->>'attempts')::int > 1)
+        ts, tl, cents = con.execute(
+            """SELECT coalesce(sum(tokens_small),0), coalesce(sum(tokens_large),0), coalesce(sum(cost_cents),0)
                  FROM jobs WHERE id = ANY(%s::uuid[])""", (query_jobs,)).fetchone()
     print(json.dumps({
         "docs": len(recs), "queries": n,

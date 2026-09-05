@@ -4,16 +4,23 @@ Run after the corpus has been ingested with the annotate node enabled:
   set -a; . ./.env.dev-tenant; set +a
   .venv/bin/python eval/run_extraction_eval.py --manifest data/synthetic/manifest.json [--limit 20]
 
-DATABASE_URL must be the app_rw role (RLS-bound); TENANT_ID selects the tenant. Reports, per
-fact kind, precision / recall / F1 with the rules that matter clinically:
+DATABASE_URL must be the app_rw role (RLS-bound); TENANT_ID selects the tenant. Patients are
+addressed by the keyed hash of their external id (patients.external_id_hash, migration 005), so
+the harness also needs TENANT_KEK: from the environment, else read from platform/.env.
+Reports, per fact kind, precision / recall / F1 with the rules that matter clinically:
   * a problem counts only if its assertion matches (present vs absent vs family);
   * a medication counts on name, and separately on name+dose+frequency;
   * a lab counts on test+value; a vital on test+value; an allergy on substance.
 Text is de-identified in the table, which is fine: none of the gold facts are identifiers."""
-import argparse, json, os, re
+import argparse, json, os, re, sys
 from collections import defaultdict
+from pathlib import Path
 
 import psycopg
+
+PLATFORM = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PLATFORM))                     # worker/tenant_keys.py: stdlib only, no worker deps
+from worker.tenant_keys import external_id_hash  # noqa: E402
 
 LAB_ALIASES = {"hba1c": {"hba1c", "a1c", "hemoglobin a1c", "glycated hemoglobin", "hgba1c"},
                "ldl": {"ldl", "ldl cholesterol", "ldl-c", "low density lipoprotein"}}
@@ -48,11 +55,25 @@ def score_set(gold: set, pred: set):
     return len(gold & pred), len(pred - gold), len(gold - pred)
 
 
+def _ensure_tenant_kek() -> None:
+    """The host only sources .env.dev-tenant; the key lives in platform/.env. Read that one line
+    (no `source`, like scripts/bootstrap_tenant.sh) so external ids can be hashed for the lookup."""
+    if os.environ.get("TENANT_KEK"):
+        return
+    env = PLATFORM / ".env"
+    for line in (env.read_text().splitlines() if env.exists() else []):
+        if line.startswith("TENANT_KEK="):
+            os.environ["TENANT_KEK"] = line.split("=", 1)[1].strip().strip('"')
+            return
+    raise SystemExit("TENANT_KEK is needed to address patients by external id (export it or set it in platform/.env)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True); ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--min-confidence", type=float, default=0.0)
     a = ap.parse_args()
+    _ensure_tenant_kek()
     recs = json.load(open(a.manifest))[: a.limit]
     gold_by_pid = {r["patient_external_id"]: r["gold_facts"] for r in recs if "gold_facts" in r}
     if not gold_by_pid:
@@ -62,15 +83,18 @@ def main():
         if con.execute("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()[0]:
             raise SystemExit("DATABASE_URL must use the RLS-bound app role (app_rw)")
         con.execute("SELECT set_config('app.tenant_id', %s, false)", (os.environ["TENANT_ID"],))
+        # Lookup through the keyed hash; the plaintext ids never reach the database.
+        by_hash = {external_id_hash(os.environ["TENANT_ID"], pid): pid for pid in gold_by_pid}
         rows = con.execute(
-            """SELECT p.external_id, f.kind, f.normalized, f.attributes, f.assertion, f.confidence, f.extractor
+            """SELECT p.external_id_hash, f.kind, f.normalized, f.attributes, f.assertion, f.confidence, f.extractor
                  FROM clinical_facts f JOIN patients p ON p.id = f.patient_id
-                WHERE p.external_id = ANY(%s) AND f.confidence >= %s""",
-            (list(gold_by_pid), a.min_confidence)).fetchall()
+                WHERE p.external_id_hash = ANY(%s) AND f.confidence >= %s""",
+            (list(by_hash), a.min_confidence)).fetchall()
 
     pred = defaultdict(lambda: defaultdict(set))
     extractors = defaultdict(int)
-    for pid, kind, normalized, attrs, assertion, conf, extractor in rows:
+    for h, kind, normalized, attrs, assertion, conf, extractor in rows:
+        pid = by_hash[h]
         attrs = attrs or {}
         extractors[extractor] += 1
         if kind == "problem":
