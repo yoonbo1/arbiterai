@@ -16,6 +16,54 @@
 
 Everything below this table is engineering and gets done without you.
 
+## Priorities (ranked 2026-09-05, after the repositioning)
+
+The goal changed on 2026-09-04: Arbiter is proof of expertise for a healthcare AI engineering
+role and a seed for a validation-layer business, not a product heading for production PHI.
+Ranking follows from that: first what makes the work public and checkable, then what a
+technical reviewer would catch, then work that produces new numbers and write-ups, then data
+and scale, then dev-box hygiene. Production safeguards are last because the site now says,
+correctly, that whoever runs this against real records does so under their own program.
+
+### 1. Make it public and seen (this week; mostly you, one click each; see the table above)
+1. Choose the licence and flip the repo public. Everything "open" is blocked on this. I then add `LICENSE`, the README badges, the GitHub links the brief asks for, and a CI workflow running `make test` so the badge means something.
+2. Request the i2b2/n2c2 2014 de-identification corpus. The one number the site is missing; I run the harness the day the files arrive.
+3. Distribution per the brief: I draft the 150-word LinkedIn version of each of the four post-mortems and the HN submissions; you post. LinkedIn headline and About take the one-liner.
+4. Search Console: add the property, submit the sitemap. Five minutes.
+5. Send the LinkedIn URL for the about page and author strip.
+
+### 2. Credibility fixes a code reviewer would catch (me; days)
+6. `audit_log` is not under RLS: `app_rw` can read every tenant's rows. The security page admits it; fix it and update the page.
+7. `job.query.completed` is written for validation-failed queries too. Record the outcome so the audit trail distinguishes a rejected answer from a delivered one.
+8. `jobs.request` stores the raw question and patient id before de-identification. This is the one gap that contradicts invariant 1 in spirit; de-identify or encrypt before persisting.
+9. Escalation to the same model at temperature 0 (post-mortem 3 says it is open): skip when the tiers are identical, and make the large tier configurable to a real larger model.
+10. Plaintext `patients.external_id`, `content_hash = md5(storage_uri)`, and the `storage_uri` left behind by a failed ingest. Three small fixes, each a thing a reader of `init.sql` will notice.
+11. `contains_phi` ignores dates and locations in the output check. Decide (Safe Harbor says they are identifiers) and document the decision on the security page either way.
+12. Move the custom Presidio recognizers into a delimited module and open the four upstream PRs the brief lists (labelled MRN, NANP with extension, title-anchored names, dosing-frequency date filter). Each PR is a portfolio item and links from its post.
+
+### 3. Work that produces new numbers and new posts (me; weeks)
+13. Protect pass before de-identification for eponyms, anatomy and lab names (`Foley`, `Cushing`, `WBC 11000`, `HbAic`). A measured false-positive rate on the production spaCy model is a post in itself.
+14. The open 0.992: OCR-corrupted identifier labels (`MAN:` for `MRN:`). Edit-distance tolerance on labels, or treat any 6 to 10 digit run on the demographics line as an identifier.
+15. Eval extensions so the numbers mean more: negative questions, multi-document patients, cross-patient probes that name another patient, and the Safe Harbor categories the corpus never exercises (ages over 89, device serials, account numbers).
+16. Judge quality: measure agreement on a labelled set; try claim-level checking instead of one number from a 7B model. Follows directly from post-mortem 3.
+17. Structured lookup over `clinical_facts` in the query graph, with the same citations.
+18. Facility names: decide whether they are geography under your Safe Harbor reading; add the recognizer if so.
+19. Tesseract misreads propagating into answers (`fisinopril`, `HbAtc`): drug-name and lab-name dictionary correction, or the VLM route on a GPU box.
+20. Concept normalization (ICD-10-CM and RxNorm alias index), fuzzy section headers on OCR, the scorer artifact for family-history duplicates.
+
+### 4. Data and scale (you start the applications; I do the rest)
+21. PhysioNet credentialing for MIMIC-IV-Note (weeks of lead time; real notes for the extraction eval).
+22. n2c2 2018 track 2 and i2b2 2010 for a real extraction evaluation; an in-house set of about 100 OCR'd pages with span-level gold.
+23. Synthea multi-document generator (about 20 document types per patient) at 60,000 patients on an external SSD; then `halfvec` and the per-tenant index partition load test.
+
+### 5. Dev-box hygiene (me; whenever)
+24. Ollama as a managed service; cache OCR so `choose_route` does not run Tesseract twice; asyncpg pool validation after a Postgres restart; retry with backoff for transient model errors; split `env_file` secrets per service; widen `api_keys.key_prefix`; verify the `gpu` profile, `vlm` route and Postgres checkpointer on a GPU box.
+25. Dyno plan (Eco vs Basic) and governing law in the terms: whenever you feel like it; nothing depends on them.
+
+### 6. Deferred: production-PHI safeguards
+Everything under "Gates" and "Safeguards the code does not provide" below (BAAs, MFA and SSO, WORM audit storage, KMS-backed keys, mTLS, multi-AZ, air-gapped model host, risk analysis and policies). Not this project's job now; the security page says so. Keep the list current in `platform/docs/HIPAA_CONTROLS.md` because it is what a deployer reads.
+
+
 
 Derived from `platform/docs/HIPAA_CONTROLS.md` plus what the first end-to-end run of the
 code exposed. Nothing on this list is optional for production PHI. Not legal advice; review
@@ -25,7 +73,7 @@ with a compliance officer.
 
 - [ ] Model host has no outbound internet: pull weights once, then air-gap or allowlist.
 - [ ] Every third party touching the machine or data has a BAA (cloud, GPU host, monitoring, support).
-- [ ] Eval gates pass on synthetic data: de-id recall >= 0.99, zero cross-patient leaks.
+- [x] Eval gates pass on synthetic data: de-id recall >= 0.99, zero cross-patient leaks. (1.000 clean / 0.992 OCR corpus, 0 leaks in every run.)
 - [ ] Admin endpoints (`/admin/*`) sit behind VPN + MFA, never on the public internet.
 - [ ] Rotate `API_KEY_PEPPER`, DB passwords, and `TENANT_KEK` out of `.env` into a secrets manager.
 
@@ -52,7 +100,7 @@ with a compliance officer.
 - [ ] The synthetic-data eval only exercises one document type (discharge summary). Add scans of real formats (faxes, forms, handwriting) once de-identified samples exist.
 - [ ] The small model runs on the developer's machine via Ollama bound to `0.0.0.0` for container access. Production model hosts need a private network and no LAN exposure.
 - [ ] Ollama is a bare background process, not a service, so nothing restarts it and it dies on reboot. It also crashed once with a bus error while idle after roughly 4,500 requests. If that recurs, capture the log and pin a different runner; for anything beyond local dev, run the model host as a managed service.
-- [ ] De-identification recall gaps seen on synthetic data: Presidio has no US street-address recognizer (street number and street name fragments survive), city names are sometimes tagged as PERSON, the `00` prefix of `001-555-...` fax numbers survives. Add an address recognizer and tune thresholds with `en_core_web_lg` on n2c2 / i2b2 before the 0.99 gate can be trusted.
+- [x] De-identification recall gaps seen on synthetic data: no US street-address recognizer, cities tagged as PERSON. (Address recognizer plus union-merge added 2026-09-03; ZIP survivors 14/20 to 0/20.) Still open: the `00` prefix of `001-555-...` fax numbers, and the whole thing re-measured on n2c2 / i2b2.
 - [ ] `documents.content_hash` is `md5(storage_uri)`, not a hash of the bytes. Hash the content so dedupe and integrity checks mean something.
 - [ ] A failed ingest leaves a `documents` row containing the client-supplied `storage_uri` (seen with the path-traversal probe). Scrub or drop it.
 - [ ] `env_file: .env` hands every secret to both containers (the worker receives `ADMIN_TOKEN`). Split secrets per service.
@@ -101,13 +149,13 @@ with a compliance officer.
 
 ## Site (it is live now, so these are live defects)
 
-- [ ] **The apex `arbiterai.tech` does not serve the site yet.** Squarespace forwarding takes 24 to 48 hours to activate and the clock restarted on 2026-09-03 when the rule was recreated. Deeper paths forward already; the root still shows Squarespace's cached parking page. Decide which ending you want: wait it out, move DNS to Cloudflare (supports DNSSEC and apex CNAME flattening, so the apex could serve Heroku directly with no forwarding), or turn off DNSSEC at Squarespace and use an ALIAS record. The third is a security downgrade and is your call, not one to make casually for a company selling security.
+- [x] **The apex `arbiterai.tech` does not serve the site yet.** (Forwarding activated 2026-09-04; the apex 301s to www.) Squarespace forwarding takes 24 to 48 hours to activate and the clock restarted on 2026-09-03 when the rule was recreated. Deeper paths forward already; the root still shows Squarespace's cached parking page. Decide which ending you want: wait it out, move DNS to Cloudflare (supports DNSSEC and apex CNAME flattening, so the apex could serve Heroku directly with no forwarding), or turn off DNSSEC at Squarespace and use an ALIAS record. The third is a security downgrade and is your call, not one to make casually for a company selling security.
 
-- [ ] Do not publish SOC 2 or HITRUST claims until the report is issued (currently listed as "In progress" / "Planned", which is accurate).
-- [ ] Confirm claims on the Security and Pricing pages that are not yet backed: "Independent penetration test summary: Available", "flow-down BAAs with all subprocessors", "99.9% uptime SLA".
-- [ ] **Set `FORM_ENDPOINT` on the Heroku app.** The form now works end to end, but with no endpoint configured the submission is only written to the application log, which is not durable and is a poor place for personal data. Pick a backend (Formspree, Basin, or a Slack/Zapier webhook) and run `heroku config:set FORM_ENDPOINT=... -a arbiterai-site`. No code or CSP change is needed: `wsgi.py` forwards server side.
-- [ ] Counsel must set the governing law and venue in the terms. The placeholder is gone; the clause now defers to the customer's signed agreement, which is honest but leaves website-only disputes unaddressed.
-- [ ] Add real founder and team bios to the About page. The placeholder callout is removed, so that column is now short. Healthcare buyers check who they are buying from.
+- [x] Do not publish SOC 2 or HITRUST claims until the report is issued. (Repositioning 2026-09-04: the attestations block is gone; the about page states no report is claimed.)
+- [x] Confirm claims on the Security and Pricing pages that are not yet backed. (Repositioning 2026-09-04: pricing page, SLA, pen-test and BAA claims all removed.)
+- [x] **Set `FORM_ENDPOINT` on the Heroku app.** (Moot: the form and the `/submit` handler were removed on 2026-09-04; contact is email and GitHub.)
+- [ ] Governing law and venue in the terms. Low priority now: the terms cover only the website, there is no customer agreement, and nothing is sold.
+- [x] About page. (Repositioning 2026-09-04: single author page. Still wants the LinkedIn URL and, optionally, a one-line bio.)
 - [x] Product page ledger (`ledger(animate=False)`) renders every row at 45% opacity with empty check marks; mark rows `done` when not animating.
 - [x] Contrast below WCAG AA: white on brass buttons (3.2:1), kicker `#8F6E2B` on frost (4.3:1), the two badge styles (about 4.1:1).
 - [x] Stale host configs now that the site runs on Heroku: `netlify.toml`, `vercel.json` and `_headers` are all dead files there (`wsgi.py` applies the headers instead). Either delete them or keep them working: `vercel.json`'s `cleanUrls: true` would 308-redirect every `.html` link, canonical and sitemap URL.
