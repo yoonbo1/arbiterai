@@ -12,6 +12,8 @@ import json
 import re
 from pathlib import Path
 
+from build import REPO, gh, src
+
 PDF_FILE = Path(__file__).parent / "assets" / "medical-record-acronyms.pdf"
 PDF_SIZE = f"{PDF_FILE.stat().st_size / 1024:,.0f} KB" if PDF_FILE.exists() else ""
 
@@ -482,6 +484,7 @@ def _post_html(title: str, lede: str, date: str, date_human: str, reading_time: 
     <h1 style="max-width:26ch">{title}</h1>
     <p class="lede">{lede}</p>
     <p class="post-meta"><time datetime="{date}">{date_human}</time><span aria-hidden="true">&middot;</span>{reading_time}<span aria-hidden="true">&middot;</span>{byline}</p>
+    <p class="small">The code and tests referenced below are in the repository: <a href="{REPO}">github.com/yoonbo1/arbiterai</a>.</p>
   </div>
 </section>
 
@@ -495,6 +498,24 @@ def _post_html(title: str, lede: str, date: str, date_human: str, reading_time: 
 
 def _reading_time(html: str) -> str:
     return f"{max(1, round(_word_count(html) / 200))} min read"
+
+
+# Post bodies are raw strings (regexes, SQL and JSON in them), so file paths are linked in a
+# pass over the finished HTML rather than inline. Only an exact <code>path</code> span whose
+# path is listed here becomes a link; function names, regexes, SQL, table and role names
+# stay plain code, and nothing inside a <pre> block is touched.
+_LINKED = {f: src(f) for f in (
+    "eval/run_eval.py", "worker/deid.py", "worker/llm.py", "worker/graph.py",
+    "worker/store.py", "gateway/main.py", "db/init.sql", "db/02_app_role.sh",
+    "tests/test_deid.py")}
+_LINKED["init.sql"] = src("db/init.sql", "init.sql")
+_LINKED["02_app_role.sh"] = src("db/02_app_role.sh", "02_app_role.sh")
+_LINKED["TODO.md"] = gh("TODO.md")
+
+
+def _link_paths(html: str) -> str:
+    return re.sub(r"<code>([^<]+)</code>",
+                  lambda m: _LINKED.get(m.group(1), m.group(0)), html)
 
 
 POST_DAILY = r"""
@@ -814,8 +835,9 @@ _NEW_POSTS = [
 ]
 
 for _p in _NEW_POSTS:
+    _body = _link_paths(_p["body_src"])
     _html = _post_html(_p["title"], _p["lede"], "2026-09-04", "September 4, 2026",
-                       _reading_time(_p["body_src"]), "Yoonbo Cho", _p["body_src"])
+                       _reading_time(_body), "Yoonbo Cho", _body)
     POSTS.append({
         "slug": _p["slug"],
         "path": f"blog/{_p['slug']}.html",
@@ -825,11 +847,11 @@ for _p in _NEW_POSTS:
         "summary": _p["summary"],
         "date": "2026-09-04",
         "date_human": "September 4, 2026",
-        "reading_time": _reading_time(_p["body_src"]),
+        "reading_time": _reading_time(_body),
         "section": "Engineering post-mortem",
         "author": "Yoonbo Cho",
         "body": _html,
-        "word_count": _word_count(_p["body_src"]),
+        "word_count": _word_count(_body),
     })
 
 # Newest first on the index and in the feed (stable sort keeps the four post-mortems in

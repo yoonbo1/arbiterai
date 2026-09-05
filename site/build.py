@@ -21,6 +21,30 @@ ONE_LINER = ("Arbiter AI is an open reference implementation of HIPAA-safe docum
              "evaluation harness that proves each of those properties holds.")
 SHORT = "Open reference implementation of HIPAA-safe document AI, with the evals to prove it."
 
+# The public repository (Apache-2.0) and the author's profile. Every link into the code on
+# the site goes through gh()/src() so the URL is written once.
+REPO = "https://github.com/yoonbo1/arbiterai"
+PROFILE = "https://github.com/yoonbo1"
+
+
+def repo_url(path: str = "") -> str:
+    """URL of one file in the repository on the main branch, or of the repository itself."""
+    return f"{REPO}/blob/main/{path}" if path else REPO
+
+
+def gh(path: str, text: str | None = None) -> str:
+    """A link to one file in the repository, rendered as code. `path` is relative to the
+    repository root (Makefile, TODO.md, platform/worker/graph.py)."""
+    return f'<a class="code-link" href="{repo_url(path)}"><code>{text or path}</code></a>'
+
+
+def src(ref: str, text: str | None = None) -> str:
+    """gh() for the platform, by the path the site already uses: src("worker/graph.py") links
+    platform/worker/graph.py. A pytest node id (tests/test_x.py::test_y) links the file and
+    keeps the full id as the text."""
+    return gh("platform/" + ref.split("::", 1)[0], text or ref)
+
+
 SHELL = """<!doctype html>
 <html lang="en">
 <head>
@@ -48,7 +72,7 @@ SHELL = """<!doctype html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/assets/styles.css">
-<script type="application/ld+json">{{"@context":"https://schema.org","@type":"Organization","name":"Arbiter AI","url":"{site}","logo":"{site}/assets/logo.svg","contactPoint":{{"@type":"ContactPoint","email":"hello@arbiterai.tech","contactType":"author"}}}}</script>
+<script type="application/ld+json">{{"@context":"https://schema.org","@type":"Organization","name":"Arbiter AI","url":"{site}","logo":"{site}/assets/logo.svg","sameAs":["{repo}","{profile}"],"contactPoint":{{"@type":"ContactPoint","email":"hello@arbiterai.tech","contactType":"author"}}}}</script>
 {head_extra}
 </head>
 <body>
@@ -74,6 +98,7 @@ SHELL = """<!doctype html>
         <a href="/security.html">Security model</a>
         <a href="/docs.html#evals">Evals</a>
         <a href="/blog.html">Blog</a>
+        <a href="{repo}">GitHub</a>
         <a href="/contact.html">Contact</a>
       </nav>
     </div>
@@ -109,7 +134,7 @@ def render(path: str, title: str, desc: str, body: str, meta: dict | None = None
                         logo=LOGO, logo_light=LOGO_LIGHT, navlinks=links, body=body,
                         og_type=meta.get("og_type", "website"),
                         head_extra=meta.get("head", "").replace("__SITE__", SITE),
-                        year=datetime.date.today().year, short=SHORT)
+                        year=datetime.date.today().year, short=SHORT, repo=REPO, profile=PROFILE)
 
 
 def _rfc822(iso_date: str) -> str:

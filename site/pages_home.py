@@ -1,5 +1,5 @@
 """Home page for arbiterai.tech, and the trace card the How-it-works page reuses."""
-from build import ONE_LINER
+from build import ONE_LINER, PROFILE, REPO, repo_url, src
 
 CHECK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
 
@@ -28,7 +28,8 @@ QUERY_TRACE = [
 def _items(steps, cls):
     return "".join(
         f'<li{cls}><span class="mark">{CHECK}</span><div><div class="step-name">{n}</div>'
-        f'<div class="step-desc">{d}</div></div><span class="step-meta">{m}</span></li>'
+        f'<div class="step-desc">{d}</div></div>'
+        f'<span class="step-meta">{src(m) if m.endswith(".py") else m}</span></li>'
         for n, d, m in steps)
 
 
@@ -58,8 +59,9 @@ HOME = f"""
       <div class="actions">
         <a class="btn btn-primary btn-lg" href="/how-it-works.html">Read the architecture</a>
         <a class="btn btn-ghost btn-lg" href="/docs.html#evals">See the evals</a>
+        <a class="btn btn-ghost btn-lg" href="{REPO}">GitHub</a>
       </div>
-      <p class="hero-note">Built and maintained by one engineer. Every number on this page comes from <code>eval/run_eval.py</code> or <code>eval/run_extraction_eval.py</code>, run on synthetic records. Nothing here has touched real PHI.</p>
+      <p class="hero-note">Built and maintained by one engineer. Every number on this page comes from {src("eval/run_eval.py")} or {src("eval/run_extraction_eval.py")}, run on synthetic records. Nothing here has touched real PHI.</p>
     </div>
     {ledger()}
   </div>
@@ -70,30 +72,30 @@ HOME = f"""
     <div class="section-head">
       <p class="kicker">Four properties</p>
       <h2>Each one is enforced in code and checked by a test or an eval metric.</h2>
-      <p class="lede">The repository is not public yet, so these are paths rather than links. The names are exact.</p>
+      <p class="lede">Every path below is a link into the repository.</p>
     </div>
     <div class="props">
       <div class="prop">
         <h3>Zero PHI reaches a model unmasked</h3>
         <p>Every node that calls a model or writes to the index asserts that the state has been de-identified first. Presidio produces the placeholders, with recognizers I had to add for labelled record numbers, phone numbers with extensions, clinician names after a title, and street addresses.</p>
         <dl>
-          <dt>Enforced by</dt><dd>the <code>deidentified</code> assertions in <code>worker/graph.py</code> (annotate, chunk_embed, generate nodes) and Presidio in <code>worker/deid.py</code></dd>
-          <dt>Tested by</dt><dd><code>tests/test_deid.py</code> and the de-id recall eval in <code>eval/run_eval.py</code></dd>
+          <dt>Enforced by</dt><dd>the <code>deidentified</code> assertions in {src("worker/graph.py")} (annotate, chunk_embed, generate nodes) and Presidio in {src("worker/deid.py")}</dd>
+          <dt>Tested by</dt><dd>{src("tests/test_deid.py")} and the de-id recall eval in {src("eval/run_eval.py")}</dd>
         </dl>
       </div>
       <div class="prop">
         <h3>Per-patient retrieval boundary, enforced in the database</h3>
         <p>The tenant comes from the API key, never from the request. Row-level security filters every PHI table on it, and retrieval adds a hard patient filter on top, so isolation does not depend on application code being bug-free.</p>
         <dl>
-          <dt>Enforced by</dt><dd>the <code>tenant_isolation</code> row-level-security policies in <code>db/init.sql</code> plus the <code>WHERE tenant_id=… AND patient_id=…</code> filter in <code>worker/retrieval.py</code></dd>
-          <dt>Tested by</dt><dd><code>tests/test_retrieval.py::test_query_is_hard_filtered_by_tenant_and_patient</code> and the cross-tenant probes (<code>cross_patient_leaks</code> in the eval, 0 in every run)</dd>
+          <dt>Enforced by</dt><dd>the <code>tenant_isolation</code> row-level-security policies in {src("db/init.sql")} plus the <code>WHERE tenant_id=… AND patient_id=…</code> filter in {src("worker/retrieval.py")}</dd>
+          <dt>Tested by</dt><dd>{src("tests/test_retrieval.py::test_query_is_hard_filtered_by_tenant_and_patient")} and the cross-tenant probes (<code>cross_patient_leaks</code> in the eval, 0 in every run)</dd>
         </dl>
       </div>
       <div class="prop">
         <h3>Every answer carries citations to the source page</h3>
         <p>An answer must cite a retrieved chunk by id, a judge must score it at or above 0.7 against those chunks, and a second de-identification pass must find nothing. Fail any of the three and no answer is returned.</p>
         <dl>
-          <dt>Enforced by</dt><dd>the validation node in <code>worker/graph.py</code> (<code>cites_chunks</code>, <code>grounded</code>, <code>phi_leak</code>) and the judge in <code>worker/llm.py</code></dd>
+          <dt>Enforced by</dt><dd>the validation node in {src("worker/graph.py")} (<code>cites_chunks</code>, <code>grounded</code>, <code>phi_leak</code>) and the judge in {src("worker/llm.py")}</dd>
           <dt>Tested by</dt><dd>the eval's <code>queries_failed_validation</code>; the judge prompt measured on qwen2.5:7b at 1.0 for a supported answer and 0.0 for an unsupported one</dd>
         </dl>
       </div>
@@ -101,7 +103,7 @@ HOME = f"""
         <h3>Append-only audit log</h3>
         <p>Every ingest, query and fact read writes an <code>audit_log</code> row with the credential, the action and the patient. The application role can insert rows and read them, and nothing else, so there is no code path that could edit history.</p>
         <dl>
-          <dt>Enforced by</dt><dd><code>REVOKE UPDATE, DELETE ON audit_log FROM app_rw</code> in <code>db/init.sql</code></dd>
+          <dt>Enforced by</dt><dd><code>REVOKE UPDATE, DELETE ON audit_log FROM app_rw</code> in {src("db/init.sql")}</dd>
           <dt>Tested by</dt><dd>UPDATE and DELETE on <code>audit_log</code> as <code>app_rw</code> return permission denied</dd>
         </dl>
       </div>
@@ -131,7 +133,7 @@ HOME = f"""
     <div class="section-head">
       <p class="kicker">Benchmarks</p>
       <h2>The numbers, with the dataset named on every row.</h2>
-      <p class="lede">Everything below is measured on synthetic records generated by <code>scripts/make_synthetic_docs.py</code>. The i2b2 row is the one that matters, and it stays empty until I hold credentialed access.</p>
+      <p class="lede">Everything below is measured on synthetic records generated by {src("scripts/make_synthetic_docs.py")}. The i2b2 row is the one that matters, and it stays empty until I hold credentialed access.</p>
     </div>
     <div class="tbl-wrap"><table class="bench">
       <thead><tr><th>Metric</th><th>Dataset</th><th>Value</th><th>Notes</th></tr></thead>
@@ -146,7 +148,7 @@ HOME = f"""
       </tbody>
     </table></div>
     <p class="small" style="margin-top:16px">On the regenerated corpus that includes OCR'd scans, whole-string recall is 0.992: one medical record number survived because Tesseract read its 'MRN:' label as 'MAN:'. That gap is open and tracked.</p>
-    <p class="small">Before → after spans the four eval iterations of 2026-09-03; the repository's changelog records every run. <a href="/docs.html#evals">How to reproduce them</a>.</p>
+    <p class="small">Before → after spans the four eval iterations of 2026-09-03; the repository's <a href="{repo_url("CHANGELOG.md")}">changelog</a> records every run. <a href="/docs.html#evals">How to reproduce them</a>.</p>
   </div>
 </section>
 
@@ -187,7 +189,7 @@ HOME = f"""
     <p class="kicker">Author</p>
     <p class="author-name">Yoonbo Cho</p>
     <p>I built Arbiter to have a public, checkable answer to what a correct clinical document pipeline looks like.</p>
-    <p class="author-links"><a href="mailto:hello@arbiterai.tech">hello@arbiterai.tech</a><a href="https://github.com/yoonbo1" rel="me">github.com/yoonbo1</a></p>
+    <p class="author-links"><a href="mailto:hello@arbiterai.tech">hello@arbiterai.tech</a><a href="{REPO}">github.com/yoonbo1/arbiterai</a><a href="{PROFILE}" rel="me">github.com/yoonbo1</a></p>
   </div>
 </section>
 """

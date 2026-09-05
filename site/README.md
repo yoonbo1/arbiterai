@@ -5,7 +5,8 @@ one small script, no forms. Built by `build.py` so the header, footer and metada
 one place.
 
 ```
-build.py           shell template, NAV, the positioning strings (ONE_LINER, SHORT), build
+build.py           shell template, NAV, the positioning strings (ONE_LINER, SHORT), the
+                   repository link helpers (REPO, PROFILE, repo_url, gh, src), build
                    (python3 build.py → public/, sitemap.xml, robots.txt, feed.xml)
 pages.py           page registry (PAGES), docs, about, contact, privacy, terms, 404
 pages_home.py      home page and the trace card (a real ingest + query trace for synthetic
@@ -27,8 +28,8 @@ Procfile, bin/     gunicorn command; bin/post_compile runs build.py during the s
 | `/security.html` | Five numbered invariants (enforced / tested), the superuser finding, the honest scope statement, what else is and is not in the code |
 | `/docs.html` | Run it locally, run the evals (`#evals`: what each metric means, adding gold questions), data (all synthetic; pointing the harness at i2b2 2014), API (`#api`), concepts, errors |
 | `/blog.html`, `/blog/*.html` | Index and posts, from `pages_blog.py` |
-| `/about.html` | Who built it, why, what it is not, links |
-| `/contact.html` | Email and GitHub profile. No form |
+| `/about.html` | Who built it, why, the licence, what it is not, links |
+| `/contact.html` | Email, the repository and the GitHub profile. No form |
 | `/privacy.html`, `/terms.html` | Website-only legal pages |
 | `/404.html` | Served by `wsgi.py` for any unmatched path |
 
@@ -38,11 +39,31 @@ Procfile, bin/     gunicorn command; bin/post_compile runs build.py during the s
 ## Voice and claims
 
 First person singular, engineer to engineer. Every claim on the site points at a code path,
-a test name, an eval metric or a post. The repository is private for now, so code paths are
-rendered as `<code>`, not links, and the phrase is "open reference implementation", never
-"open-source". The one-liner and the short form are constants in `build.py`; the honest
-scope statement on the security page is verbatim from the repositioning brief. Do not add
-certification, SLA, support or BAA language anywhere.
+a test name, an eval metric or a post, and every code path is a link into the public
+repository (see "Linking to the repository" below). "Open source" is fine where it reads
+naturally; the one-liner, the short form, the home H1 and the scope statement on the
+security page are verbatim from the repositioning brief and stay as they are. The licence
+(Apache-2.0) is stated once, on the about page. Do not add certification, SLA, support or
+BAA language anywhere.
+
+## Linking to the repository
+
+The repository is public at `https://github.com/yoonbo1/arbiterai`. `build.py` holds the
+URL once, as `REPO` (and `PROFILE` for the author's GitHub profile), and three helpers:
+
+- `repo_url(path)` — the URL of one file on `main`, or of the repository when `path` is empty.
+- `gh(path, text=None)` — that URL as `<a class="code-link"><code>text or path</code></a>`,
+  for a path relative to the repository root: `gh("Makefile", "make eval")`, `gh("TODO.md")`.
+- `src(ref, text=None)` — `gh()` for the platform, by the path the site already uses:
+  `src("worker/graph.py")` links `platform/worker/graph.py`. A pytest node id such as
+  `src("tests/test_deid.py::test_labeled_mrn_forms")` links the file and keeps the id as text.
+
+Never hand-write a GitHub URL in a page; import the helpers from `build`. The post-mortem
+bodies in `pages_blog.py` are raw strings (regexes, SQL and JSON in them), so their paths are
+linked afterwards by `_link_paths()`, which rewrites only an exact `<code>path</code>` span
+whose path is in its allowlist; function names, regexes and SQL stay plain code. Only link a
+file that exists: the build does not check, so after adding one, run the site and confirm
+every `/blob/main/` href resolves. The `.code-link` style is in `assets/styles.css`.
 
 ## Deploy
 
@@ -110,7 +131,8 @@ Heroku's Automated Certificate Management issued the Let's Encrypt certificate f
 - [ ] `hello@arbiterai.tech` mailbox exists; SPF, DKIM, DMARC records set
 - [ ] Submit `sitemap.xml` in Google Search Console and Bing Webmaster Tools
 - [ ] Verify the Organization schema with Google's Rich Results test
-- [ ] Add the GitHub repository link (hero button, footer, author strip) once the repo is public
+- [x] Add the GitHub repository link (hero button, footer, author strip, JSON-LD `sameAs`,
+      every code path) — the repository went public on 2026-09-05
 - [ ] Add the i2b2 2014 row's value to the benchmarks table once the harness has been run on it
 - Keep the "no medical advice" line in the footer and terms.
 - Do not say "HIPAA certified" (there is no such certification), and do not add SOC 2 or
@@ -118,7 +140,8 @@ Heroku's Automated Certificate Management issued the Let's Encrypt certificate f
 
 ## Editing
 
-Copy lives in `pages*.py` as HTML strings. Colors and type are CSS variables at the top of
+Copy lives in `pages*.py` as HTML strings (f-strings where a page embeds links, so a literal
+brace in one of those is written `{{`). Colors and type are CSS variables at the top of
 `assets/styles.css`. Navigation is the `NAV` list in `build.py`; the footer links are in the
 shell template there. Run `python3 build.py` after any change; the host rebuilds
 automatically on push.

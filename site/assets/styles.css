@@ -152,6 +152,15 @@ pre{background:var(--ink);color:#E9EDF3;padding:20px 22px;border-radius:8px;over
 code{font-family:var(--mono);font-size:.92em;background:#E7EAF0;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
 pre code{background:none;padding:0}
 
+/* Links into the repository: a <code> span that is also a link (build.py gh()/src()).
+   Same box as any code span, brass text, underline on hover; gold inside a <pre> and on ink;
+   plain inside the trace card, which sets its own colours per row. */
+.code-link{color:var(--brass-2);text-decoration:none}
+.code-link:hover{text-decoration:underline}
+pre .code-link,.on-ink .code-link{color:#D6B36A}
+.ledger .code-link{color:inherit}
+.ledger .code-link code{background:none;padding:0;font-size:inherit}
+
 /* Prose pages */
 .prose{max-width:760px}
 .prose h2{font-size:1.7rem;margin-top:2em}

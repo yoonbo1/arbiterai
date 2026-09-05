@@ -114,3 +114,8 @@ test: venv
 clean:
 	rm -rf $(SITE)/public
 	find $(ROOT) -name __pycache__ -type d -prune -exec rm -rf {} +
+
+llm: ## Pull the local model and check the Ollama server the worker talks to
+	@curl -sf http://localhost:11434/api/tags >/dev/null || { echo "Ollama is not running: start it with 'ollama serve' (or open the Ollama app)"; exit 1; }
+	ollama pull qwen2.5:7b-instruct
+	@echo "ok: qwen2.5:7b-instruct available at http://localhost:11434 (the containers reach it as host.docker.internal:11434)"
