@@ -57,7 +57,7 @@ make synth N=20                          # synthetic records with injected fake 
 make bootstrap                           # dev tenant + API key -> platform/.env.dev-tenant
 make eval LIMIT=20                       # ingest, de-id recall, 40 gold questions, leaks, latency, cost
 make eval-extraction LIMIT=20            # clinical-fact extraction against gold
-make test                                # 130 tests with the clinical extras; CI runs 75 without them
+make test                                # 227 tests with the clinical extras; CI runs 172 without them
 ```
 
 ## Evaluation results
@@ -67,13 +67,15 @@ make test                                # 130 tests with the clinical extras; C
 | De-identification recall, whole string | synthetic, 20 records | 0.967 → 1.000 | four iterations in a day |
 | De-identification recall, strict per component | synthetic, 20 records | ≈0.81 → 1.000 | the metric that exposed surviving ZIP codes |
 | ZIP codes surviving | synthetic, 20 records | 14/20 → 0/20 | |
-| Answer accuracy, strict | synthetic, 40 gold questions | 0.575 → 0.95 | |
+| Answer accuracy, strict | synthetic, 40 gold questions | 0.575 → 0.975 | |
 | Cross-patient leaks | synthetic, every run | 0 | |
 | Clinical extraction F1: problems (assertion required) / medications (name, dose, frequency) / labs | synthetic, 20 records | 1.00 / 1.00 / 0.99 | |
 | De-identification recall | i2b2 2014 test set | not yet run | the number that matters; needs credentialed access |
 
-On the regenerated corpus that includes OCR'd scans, whole-string recall is 0.992: one
-record number survived because Tesseract read its `MRN:` label as `MAN:`. Open, tracked.
+On the regenerated corpus that includes OCR'd scans, whole-string recall was 0.992 until
+2026-09-05 (one record number survived because Tesseract read its `MRN:` label as `MAN:`).
+The MRN recognizer now tolerates one OCR error in the label; the same corpus scores 1.000
+whole-string and strict, accuracy 0.975, 0 leaks, 0 validation failures.
 
 ## Failure modes I found
 

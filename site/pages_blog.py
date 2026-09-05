@@ -505,7 +505,7 @@ def _reading_time(html: str) -> str:
 # path is listed here becomes a link; function names, regexes, SQL, table and role names
 # stay plain code, and nothing inside a <pre> block is touched.
 _LINKED = {f: src(f) for f in (
-    "eval/run_eval.py", "worker/deid.py", "worker/llm.py", "worker/graph.py",
+    "eval/run_eval.py", "worker/deid.py", "worker/recognizers/address.py", "worker/recognizers/date_filter.py", "worker/recognizers/mrn.py", "worker/llm.py", "worker/graph.py",
     "worker/store.py", "gateway/main.py", "db/init.sql", "db/02_app_role.sh",
     "tests/test_deid.py")}
 _LINKED["init.sql"] = src("db/init.sql", "init.sql")
@@ -527,7 +527,7 @@ POST_DAILY = r"""
 <p>The count that gave it away was <code>phi_tokens</code> grouped by entity type before the fix: DATE_TIME 84, PERSON 66, PHONE_NUMBER 20, MRN 20, LOCATION 18. Twenty synthetic documents with a date of birth, an admission date and a discharge date each is 60 date tokens. Eighty-four meant about two dozen were something else.</p>
 
 <h2 id="the-fix">The fix</h2>
-<p>Safe Harbor removes dates tied to a person: birth, admission, discharge, death. A dosing frequency or a follow-up interval is clinical content, and there is no re-identification risk in the word "nightly". In <code>worker/deid.py</code> a DATE_TIME hit is now kept only if it contains something calendar-like:</p>
+<p>Safe Harbor removes dates tied to a person: birth, admission, discharge, death. A dosing frequency or a follow-up interval is clinical content, and there is no re-identification risk in the word "nightly". In <code>worker/recognizers/date_filter.py</code> (the filter lived in <code>worker/deid.py</code> when this was found) a DATE_TIME hit is now kept only if it contains something calendar-like:</p>
 <pre><code>_DATE_LIKE = re.compile(
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\b"  # month names
     r"|\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b"                                  # 3/5/2024, 03-05-24
@@ -595,7 +595,7 @@ leaked_parts = sorted({part for _, part in parts if part in text})
 "phi_component_survivors": leaked_parts[:8],</code></pre>
 
 <h2 id="fix-2">Fix 2: an address recognizer</h2>
-<p><code>_address_recognizer()</code> in <code>worker/deid.py</code> adds four LOCATION patterns:</p>
+<p>The address recognizer (now its own module, <code>worker/recognizers/address.py</code>; it lived in <code>worker/deid.py</code> when this was found) adds four LOCATION patterns:</p>
 <ul>
 <li>A labelled <code>Address:</code> line, taken whole as <code>street, city, ST ZIP</code> (up to three comma segments) and stopping at a run of two spaces, the next <code>Label:</code> on the line, or end of line. Score 0.85.</li>
 <li>A street line: a number, one to four words, a USPS suffix (Street, Lights, Roads, and the rest of the list), an optional unit. Score 0.6.</li>
@@ -625,7 +625,7 @@ leaked_parts = sorted({part for _, part in parts if part in text})
 <tr><td>4</td><td>1.000</td><td>1.000</td><td>union overlap resolution, whitespace trim, case-sensitive names (from new tests, not the eval)</td></tr>
 </tbody></table></div>
 <p>The six strict survivors in run 2 were all Faker city names: Blankenshipstad, Hernandezview, Kingland, New Amber, New Brendaton, New Bryanhaven. Run 3's <code>City, ST 12345</code> pattern removed them without knowing any of them.</p>
-<div class="callout"><p><strong>What 1.000 does not prove.</strong> On the regenerated synthetic corpus that includes OCR'd scans, whole-string recall is 0.992: one MRN survived because Tesseract read its <code>MRN:</code> label as <code>MAN:</code>, and the recognizer is anchored on the label. Beyond that, the synthetic number says nothing about real names (Faker names are clean and capitalized), about OCR-mangled identifiers in general, or about facility names, which are not scrubbed at all. Those are in <code>TODO.md</code>. The i2b2 2014 de-identification corpus is the real test, pending credentialed access.</p></div>
+<div class="callout"><p><strong>What 1.000 does not prove.</strong> On the regenerated synthetic corpus that includes OCR'd scans, whole-string recall was 0.992 when this was written: one MRN survived because Tesseract read its <code>MRN:</code> label as <code>MAN:</code>, and the recognizer was anchored on the exact label. (Update, 2026-09-05: <code>worker/recognizers/mrn.py</code> now accepts one OCR error in the label and a bare 6-to-10-digit run on a demographics line; the same corpus scores 1.000 whole-string and strict.) Beyond that, the synthetic number says nothing about real names (Faker names are clean and capitalized), about OCR-mangled identifiers in general, or about facility names, which are not scrubbed at all. Those are in <code>TODO.md</code>. The i2b2 2014 de-identification corpus is the real test, pending credentialed access.</p></div>
 
 <h2 id="what-to-check">What to check in your own pipeline</h2>
 <ul>
@@ -764,7 +764,7 @@ SELECT count(*) FROM chunks;                                          -- every t
 
 <h2 id="design">The design point</h2>
 <p>Tenant isolation must not depend on application code being bug-free. A lookup with no tenant filter (which is exactly what the job endpoint is, by design), a wrong join, a connection that came back from the pool with someone else's context: with row-level security enforced, each of those returns zero rows or an error. Without it, each returns another tenant's records. But that guarantee is only real if the policy applies to the role the application actually uses. A policy the connecting role is exempt from is documentation, not a control, and it is worse than no policy because it is reassuring. The invariants this enforces, and how each is tested, are on the <a href="/security.html">security model</a> page.</p>
-<div class="callout"><p><strong>What is still not under RLS</strong> (tracked in <code>TODO.md</code>). <code>audit_log</code> has no policy, so <code>app_rw</code> can read every tenant's audit rows; it needs a policy or a tenant-scoped view. And RLS scopes rows by whatever the application sets: the application role can read any tenant's rows once <code>app.tenant_id</code> is set to that tenant, so a bug that sets the wrong value is still a bug. The gateway takes the tenant from the API key's row, never from the request body, and that is the line the policy holds.</p></div>
+<div class="callout"><p><strong>Update, 2026-09-05.</strong> The gap this callout originally described is closed: <code>audit_log</code> now carries the same <code>tenant_isolation</code> policy as the PHI tables (migration <code>003_audit_log_rls.sql</code>), so an <code>app_rw</code> session set to tenant A sees none of tenant B's audit rows, and an insert for the wrong tenant violates the policy. The two admin events that had no tenant context (<code>key.created</code>, <code>key.revoked</code>) now run under the key's tenant. What remains true: the application role can still read every row of its own tenant, and nothing here substitutes for the KMS-issued keys, WORM storage and access review a deployment adds around it.</p></div>
 
 <h2 id="what-to-check">What to check in your own pipeline</h2>
 <ul>

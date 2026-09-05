@@ -230,9 +230,11 @@ def decrypt_tokens(tenant_id: str, document_id: str, tokens: list[str]) -> dict[
     return {t: v for t, v in rows}
 
 
-def audit(state: dict) -> None:
+def audit(state: dict, action: str | None = None, detail: dict | None = None) -> None:
     """Finish the job (result encrypted under the tenant key; the re-identified answer is only
-    ever decrypted by the gateway for the caller) and write the audit row, both under RLS."""
+    ever decrypted by the gateway for the caller) and write the audit row, both under RLS.
+    `action`/`detail` default to job.<kind>.completed with the ingest summary; the query path
+    passes its own outcome (job.query.completed or job.query.rejected with the reasons)."""
     usage = state.get("usage", {})
     result = {"answer": state.get("answer"), "validation": state.get("validation"),
               "citations": [c["id"] for c in state.get("chunks", [])],
@@ -247,8 +249,8 @@ def audit(state: dict) -> None:
             "INSERT INTO audit_log (tenant_id, api_key_id, job_id, actor, action, patient_id, detail) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (state["tenant_id"], state["api_key_id"], state["job_id"], "worker",
-             f"job.{state['kind']}.completed", state.get("patient_id"),
-             Jsonb({"chunks_read": len(state.get("chunks", [])), "attempts": state.get("attempts"),
+             action or f"job.{state['kind']}.completed", state.get("patient_id"),
+             Jsonb(detail if detail is not None else {"chunks_read": len(state.get("chunks", [])), "attempts": state.get("attempts"),
                     "phi_reidentified": bool(state.get("answer")),
                     "pages": len(state.get("pages", [])) if state.get("kind") == "ingest" else None,
                     "routes": {r: sum(1 for p in state.get("pages", []) if p.route == r)

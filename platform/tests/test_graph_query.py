@@ -113,7 +113,7 @@ class FakeConn:
     @property
     def job(self):
         p = self._one("UPDATE jobs SET")
-        return {"status": p[0], "result": p[1].obj, "tokens_small": p[2], "tokens_large": p[3], "job_id": p[5]}
+        return {"status": p[0], "result": json.loads(p[1]), "tokens_small": p[3], "tokens_large": p[4], "job_id": p[6]}
 
     @property
     def audit(self):
@@ -132,7 +132,6 @@ def db(monkeypatch):
 
     monkeypatch.setattr(store, "tenant_conn", tenant_conn)
     monkeypatch.setattr(store, "decrypt_tokens", lambda *a: pytest.fail("document tokens must not be decrypted here"))
-    monkeypatch.setattr(store, "audit", lambda state: pytest.fail("the query path must not use store.audit"))
     return conn
 
 

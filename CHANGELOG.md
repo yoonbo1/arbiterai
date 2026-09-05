@@ -58,6 +58,15 @@ reason for each. Dates are when the change was made.
 
 ### Platform — query path
 
+- **Integration fix after the merge.** The query-path change first carried its own copy of the
+  job-finishing `UPDATE jobs ... result=` statement, written against the pre-encryption schema;
+  merged with the data-at-rest change (`result_enc` under the tenant key) it failed on every
+  query with `UndefinedColumn`, which the 20-record eval showed as 40 of 40 validation failures
+  with zero tokens. `store.audit` now takes an optional `action`/`detail` and is the single
+  writer for both paths; `graph.audit` passes the query outcome. Caught by the eval, not the
+  unit tests: the fake connection accepted any SQL. Lesson kept in `TODO.md` (dev-box hygiene):
+  a schema test that executes the worker's statements against a throwaway Postgres.
+
 - **The audit trail now says whether an answer was delivered** (TODO item 7). The audit
   node in `worker/graph.py` wrote `job.query.completed` for every finished query, including
   the ones validation rejected. A rejected query now writes `job.query.rejected`; only a

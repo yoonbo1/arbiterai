@@ -25,7 +25,6 @@ import os, time
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
-from psycopg.types.json import Jsonb
 
 from . import annotate, deid, extract, llm, reid, retrieval, store
 
@@ -262,30 +261,12 @@ def query_outcome(state: State) -> tuple[str, dict]:
     return (QUERY_COMPLETED if delivered else QUERY_REJECTED), detail
 
 
-def _write_query_audit(state: State, action: str, detail: dict) -> None:
-    """The job row exactly as store.audit writes it (status, result, tokens, cost), plus the
-    outcome-specific audit_log row. store.audit hard-codes job.<kind>.completed, so the query
-    path writes its own row; ingest still goes through store.audit."""
-    usage = state.get("usage", {})
-    with store.tenant_conn(state["tenant_id"]) as con:
-        con.execute(
-            "UPDATE jobs SET status=%s, result=%s, tokens_small=%s, tokens_large=%s, cost_cents=%s, finished_at=now() WHERE id=%s",
-            ("failed" if state.get("errors") else "done",
-             Jsonb({"answer": state.get("answer"), "validation": state.get("validation"),
-                    "citations": [c["id"] for c in state.get("chunks", [])],
-                    "errors": state.get("errors") or []}),
-             usage.get("small", 0), usage.get("large", 0), llm.cost_cents(usage), state["job_id"]))
-        con.execute(
-            "INSERT INTO audit_log (tenant_id, api_key_id, job_id, actor, action, patient_id, detail) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (state["tenant_id"], state["api_key_id"], state["job_id"], "worker", action,
-             state.get("patient_id"), Jsonb(detail)))
-
-
 def audit(state: State) -> State:
+    """One writer for the job row (store.audit encrypts the result under the tenant key); the
+    query path passes its outcome so the audit row is job.query.completed or job.query.rejected."""
     if state.get("kind") == "query":
         action, detail = query_outcome(state)
-        _write_query_audit(state, action, detail)
+        store.audit(state, action=action, detail=detail)
     else:
         store.audit(state)                                # ingest: job.ingest.completed, unchanged
     return {}

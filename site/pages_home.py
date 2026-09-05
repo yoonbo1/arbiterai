@@ -141,13 +141,13 @@ HOME = f"""
         <tr><td>De-identification recall, whole string</td><td><span class="badge gold">Synthetic</span> 20 records</td><td class="mono">0.967 → 1.000</td><td>four iterations in a day</td></tr>
         <tr><td>De-identification recall, strict per component</td><td><span class="badge gold">Synthetic</span> 20 records</td><td class="mono">≈0.81 → 1.000</td><td>the metric that exposed surviving ZIP codes</td></tr>
         <tr><td>ZIP codes surviving de-identification</td><td><span class="badge gold">Synthetic</span> 20 records</td><td class="mono">14/20 → 0/20</td><td></td></tr>
-        <tr><td>Answer accuracy, strict</td><td><span class="badge gold">Synthetic</span> 40 gold questions</td><td class="mono">0.575 → 0.95</td><td></td></tr>
+        <tr><td>Answer accuracy, strict</td><td><span class="badge gold">Synthetic</span> 40 gold questions</td><td class="mono">0.575 → 0.975</td><td></td></tr>
         <tr><td>Cross-patient leaks</td><td><span class="badge gold">Synthetic</span> every run</td><td class="mono">0</td><td></td></tr>
         <tr><td>Clinical extraction F1: problems (assertion required) / medications (name, dose, frequency) / labs</td><td><span class="badge gold">Synthetic</span> 20 records</td><td class="mono">1.00 / 1.00 / 0.99</td><td></td></tr>
         <tr><td>De-identification recall</td><td>i2b2 2014 test set (real, credentialed)</td><td class="mono">not yet run</td><td>the number that matters; pending credentialed access</td></tr>
       </tbody>
     </table></div>
-    <p class="small" style="margin-top:16px">On the regenerated corpus that includes OCR'd scans, whole-string recall is 0.992: one medical record number survived because Tesseract read its 'MRN:' label as 'MAN:'. That gap is open and tracked.</p>
+    <p class="small" style="margin-top:16px">On the regenerated corpus that includes OCR'd scans, whole-string recall was 0.992 until 2026-09-05: one medical record number survived because Tesseract read its 'MRN:' label as 'MAN:'. The MRN recognizer now tolerates one OCR error in the label, and the same corpus scores 1.000 whole-string and 1.000 strict (20 records, 40 questions, accuracy 0.975, 0 leaks).</p>
     <p class="small">Before → after spans the four eval iterations of 2026-09-03; the repository's <a href="{repo_url("CHANGELOG.md")}">changelog</a> records every run. <a href="/docs.html#evals">How to reproduce them</a>.</p>
   </div>
 </section>

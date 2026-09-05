@@ -48,7 +48,7 @@ HOW_IT_WORKS = f"""
         <p>After validation passes, only the tokens the answer uses are restored: question tokens from the in-memory map, document tokens decrypted from <code>phi_tokens</code> under the tenant key, using the per-query namespace index to find which document each came from. Nothing is decrypted before the model has answered, and nothing the answer does not use. Logs, checkpoints and metrics keep the tokenized form.</p>
         <p class="stage-meta"><b>Lives in</b> {src("worker/reid.py")} · <b>Covered by</b> {src("tests/test_reid.py")}, including the case where a question about one clinician could name another</p></li>
       <li><h4>Audit write</h4>
-        <p>Every job ends with an <code>audit_log</code> row: <code>job.ingest.completed</code> with pages, routes and fact counts; <code>job.query.completed</code> with the validation summary and whether anything was re-identified; <code>facts.read</code> on the facts endpoint. The application role holds INSERT and SELECT on the table and nothing else.</p>
+        <p>Every job ends with an <code>audit_log</code> row: <code>job.ingest.completed</code> with pages, routes and fact counts; <code>job.query.completed</code> for a delivered answer, or <code>job.query.rejected</code> with the reasons (<code>phi_leak</code>, <code>cites_chunks</code>, <code>grounded</code>, <code>no_chunks</code>) when validation failed, each with the validation summary, whether an escalation ran, and whether anything was re-identified; <code>facts.read</code> on the facts endpoint. The application role holds INSERT and SELECT on the table and nothing else, and row-level security limits its SELECT to its own tenant.</p>
         <p class="stage-meta"><b>Lives in</b> {src("db/init.sql")}, writes in {src("worker/store.py")} and {src("gateway/main.py")} · <b>Covered by</b> <code>REVOKE UPDATE, DELETE ON audit_log FROM app_rw</code>; UPDATE and DELETE as <code>app_rw</code> return permission denied</p></li>
     </ol>
   </div>
@@ -189,7 +189,7 @@ SECURITY = f"""
       <h2>Not in the reference implementation</h2>
       <ul>
         <li>TLS between the internal services. The public site has it; the compose stack does not.</li>
-        <li>A KMS-issued key per tenant. Today the map key is derived from <code>TENANT_KEK</code> and the tenant id.</li>
+        <li>A KMS-issued key per tenant. Today the key that encrypts the PHI map, the job request and result, and the patient identifier is derived from <code>TENANT_KEK</code> and the tenant id.</li>
         <li>A written risk analysis, workforce training, incident response: the things a compliance program adds around the software, which the software cannot supply.</li>
         <li>Real data, ever. {gh("TODO.md")} in the repository lists what would have to be true first.</li>
       </ul>

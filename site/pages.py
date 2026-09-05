@@ -64,7 +64,7 @@ DOCS = f"""
     <h2 id="evals">Run the evals</h2>
 <pre><code>{gh("Makefile", "make eval")} LIMIT=20              # {src("eval/run_eval.py")}: ingest, de-id recall, 40 gold questions, leaks, latency, cost
 {gh("Makefile", "make eval-extraction")} LIMIT=20   # {src("eval/run_extraction_eval.py")}: clinical facts against the manifest's gold_facts
-{gh("Makefile", "make test")}                       # pytest, no Docker needed: 130 passed, 2 skipped, 2 xfailed</code></pre>
+{gh("Makefile", "make test")}                       # pytest, no Docker needed: 227 tests with the clinical extras, 172 without</code></pre>
     <p>Both evals read <code>TENANT_ID</code>, <code>API_KEY</code>, <code>DATABASE_URL</code> and <code>GATEWAY</code> from <code>platform/.env.dev-tenant</code>, written by {gh("Makefile", "make bootstrap")}. {src("eval/run_eval.py", "run_eval.py")} refuses to run as a superuser or a BYPASSRLS role, because a leak check that bypasses row-level security measures nothing. One run of twenty records and forty questions takes under three minutes on an M4.</p>
     <h3>What each metric means</h3>
     <div class="tbl-wrap"><table>
