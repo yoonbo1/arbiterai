@@ -3,6 +3,59 @@
 All changes from the original two zips (`hipaa-doc-ai.zip`, `arbiterai-site.zip`), with the
 reason for each. Dates are when the change was made.
 
+## 2026-09-05 — platform hardening
+
+### Platform — de-identification
+
+- **Custom recognizers moved into `worker/recognizers/`** (TODO item 12, module part). One
+  module per recognizer or result filter: `mrn.py`, `phone.py`, `clinician_name.py`,
+  `address.py`, `date_filter.py`, `person_trim.py`, each with presidio-analyzer as its only
+  dependency (no `worker.*` imports, enforced by a test) and a docstring carrying the failure,
+  the scores and the examples from this changelog. `recognizers.custom_recognizers()` returns
+  them in the order `deid.py` always registered them. Behaviour was checked byte-identical
+  before anything else changed: the suite passed with the tests untouched (130 passed,
+  2 skipped, 2 xfailed) and every pattern regex, score, name, entity, context list, the date
+  regex and the title/label sets compared equal to the pre-move source. Eleven recognizer
+  tests (20 cases) moved from `tests/test_deid.py` to the new `tests/test_recognizers.py`
+  with no assertion dropped; `test_deid.py` keeps the engine, Scrubber, `_select`, `restore`
+  and `contains_phi` tests. The four upstream PRs are written up in
+  `platform/docs/UPSTREAM.md` (title, description, source module, target path in Presidio
+  2.2.364, tests, what still needs adapting) and are **not opened**.
+- **OCR-tolerant MRN labels close the 0.992 gap** (TODO item 14). The MRN recognizer is now
+  `MrnRecognizer(PatternRecognizer)`, named `mrn_regex`, with three tiers: the exact label at
+  0.85 as before; every edit-distance-1 variant of the label (one letter substituted or
+  deleted: `MAN`, `MRM`, `RN`) and every spacing variant (`M R N`) at 0.7, generated from the
+  label list (81 variants for `MRN`) and grouped by width so each lookbehind stays
+  fixed-width; and a 0.5 fallback for a bare 6-10 digit run on a line that also carries a
+  demographics cue (`DOB`, `Patient`, `Name`, `Sex`, `Age`). `MAN: 1234567`, `MRM 1234567`,
+  `M R N: 1234567` and `Patient: John Doe   1234567   DOB 01/02/1960` are now scrubbed, the
+  label kept; `03/05/2024`, `555-0100`, `75001`, `WBC 11000` and `HbA1c 9.0` on the same
+  line are not (none has six consecutive digits). Known cost: a six-digit lab value written
+  on the demographics line (`platelets 250000`) would be taken; the protect pass (item 13) is
+  the fix for that. The OCR eval was not re-run here; the survivor it reported is now caught
+  by the unit tests, so the expectation is 1.000.
+- **The output leak check now counts dates and addresses** (TODO item 11). `contains_phi`
+  ignored DATE_TIME and LOCATION entirely, so a raw date or address in an answer passed. It
+  now applies the scrub's own criteria: a DATE_TIME hit counts when calendar-like
+  (`date_filter`), a LOCATION hit when the address recognizer produced it, and the address
+  patterns are also run directly on the text because Presidio drops a pattern hit that lies
+  inside a same-typed, higher-scoring NER span. Bare state names (`Texas`), dosing frequencies
+  and durations still pass. Rationale (validation runs before re-identification, so a raw
+  date or address can only be a chunk the de-identifier missed) is in
+  `platform/docs/HIPAA_CONTROLS.md`, "Output leak check". Found by the spot-check: the check
+  also rejected every answer shaped `Attending: Dr. <PERSON_2> ...`, because the
+  title-anchored name recognizer matches the bare `Dr` after `Attending:` and the leak check
+  never applied the title trim the scrub applies (pre-existing; the pre-move code did the
+  same). PERSON hits now go through `person_trim` too, so a bare title is not a leak but
+  `Attending: Dr. Young` still is.
+- **Tests: 180 passed, 2 skipped, 2 xfailed** (from 130). `test_recognizers.py` 58 cases:
+  the 20 moved, plus package shape and isolation, per-recognizer spans and scores without the
+  NLP engine, the 14 date-filter boundary cases, and the OCR-label and demographics-line
+  cases with their negatives. `test_deid.py` 33 cases; a 13-case leak-check table replaces
+  the old "ignores dates and locations" test. Still to do outside this change:
+  `site/pages_blog.py` names `_address_recognizer()` in `worker/deid.py`; it is now
+  `worker/recognizers/address.py`.
+
 ## 2026-09-04 — repositioning: open reference implementation
 
 Per `ARBITER_REPOSITIONING.md`: the site, README and blog now describe Arbiter as an open
