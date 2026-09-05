@@ -3,7 +3,11 @@ SPACY_MODEL before import). The analyzer is built once per session on first use.
 
 Assertions are structural: raw identifiers must be gone, tokens must be well formed and
 reversible. spaCy entity labels are only asserted where they are stable for this model;
-cases that en_core_web_sm cannot satisfy are kept as xfail so the gap stays visible."""
+cases that en_core_web_sm cannot satisfy are kept as xfail so the gap stays visible.
+
+This file covers the engine, Scrubber/scrub/scrub_pages, overlap resolution, restore and
+contains_phi. Tests of the individual custom recognizers and result filters live in
+tests/test_recognizers.py (worker/recognizers/)."""
 import re
 
 import pytest
@@ -54,7 +58,7 @@ def test_analyzer_uses_small_model_and_is_a_singleton():
     assert deid.SPACY_MODEL == "en_core_web_sm"
     assert deid.analyzer() is deid.analyzer()
     names = {r.name for r in deid.analyzer().registry.recognizers}
-    assert "phone_regex" in names and "PatternRecognizer" in names       # our MRN recognizer
+    assert "phone_regex" in names and "mrn_regex" in names       # ours, by name
 
 
 # ---------------------------------------------------------------- scrub()
@@ -125,33 +129,6 @@ def test_restore_leaves_unknown_tokens_and_citations_alone():
 def test_scrub_empty_and_blank_text():
     assert deid.scrub("") == ("", {})
     assert deid.scrub("  \n\t") == ("  \n\t", {})
-
-
-@pytest.mark.parametrize("text", ["MRN: 1234567", "MRN:1234567", "MRN 1234567",
-                                  "MRN# 1234567", "MRN#1234567", "MRN: 1234567890"])
-def test_labeled_mrn_forms(text):
-    clean, phi_map = deid.scrub(text)
-    digits = text.split("MRN")[1].lstrip(":# ")
-    assert digits not in clean
-    assert clean.startswith("MRN")                     # the label is kept, only digits replaced
-    assert phi_map == {"<MRN_1>": digits}
-
-
-@pytest.mark.parametrize("phone", ["+1-921-899-3518x19093", "(555) 201-8842 ext. 12",
-                                   "555.201.8842", "921-899-3518 extension 7", "+1 921 899 3518"])
-def test_phone_forms_with_extensions(phone):
-    text = f"Contact phone: {phone}. Thanks."
-    clean, phi_map = deid.scrub(text)
-    assert phone not in clean
-    assert_well_formed(clean, phi_map)
-    assert phi_map.get("<PHONE_NUMBER_1>") == phone
-    assert deid.restore(clean, phi_map) == text
-
-
-def test_uncommon_hyphenated_name_after_honorific():
-    clean, phi_map = deid.scrub("Dr. Priya Raghunathan-Okafor reviewed the chart.")
-    assert "Raghunathan" not in clean
-    assert "Priya Raghunathan-Okafor" in phi_map.values()
 
 
 # ---------------------------------------------------------------- scrub_pages()
@@ -240,9 +217,26 @@ def test_contains_phi_true_for_raw_identifiers():
     assert deid.contains_phi(f"The patient's MRN is {MRN}.") is True
 
 
-def test_contains_phi_ignores_dates_and_locations():
-    """Dates/locations are allowed in answers (they are clinical content, not identifiers here)."""
-    assert deid.contains_phi("Admitted on 2024-01-05 and discharged 2 weeks later.") is False
+@pytest.mark.parametrize("answer, leaks", [
+    ("HbA1c 9.0% on <DATE_TIME_2> [7]", False),          # placeholder: the de-identifier caught it
+    ("HbA1c 9.0% on March 3, 2024 [7]", True),           # a raw calendar date can only be a missed chunk
+    ("take metformin daily for 2 weeks", False),         # frequency and duration are clinical content
+    ("lives in Kingland, TX 75001", True),               # City, ST ZIP from the address recognizer
+    ("transferred to a hospital in Texas", False),       # a bare state name from NER is not an identifier
+    ("Admitted on 2024-01-05 and discharged 2 weeks later.", True),   # allowed before 2026-09-05
+    ("Blood cultures were negative at 48 hours.", False),
+    ("Address: 609 Stacey Roads, New Brendaton, IN 06606", True),     # labelled address line
+    ("lives at 12 Oak Street Apt 4 with family", True),               # unlabelled street line
+    ("WBC 11000, platelets 250000", False),              # bare digit runs without address context
+    ("Discharged in <DATE_TIME_1> to <LOCATION_1>.", False),
+    ("Attending: Dr. <PERSON_2> prescribed metformin [7].", False),   # bare title after a label is not a name
+    ("Attending: Dr. Young prescribed metformin [7].", True),         # the name itself is
+])
+def test_contains_phi_counts_identifying_dates_and_addresses(answer, leaks):
+    """Validation runs before re-identification, so a raw date or address in the answer can
+    only mean the de-identifier missed it in a chunk; the check applies the scrub's own
+    criteria (docs/HIPAA_CONTROLS.md, "Output leak check")."""
+    assert deid.contains_phi(answer) is leaks
 
 
 # ---------------------------------------------------------------- known gaps (kept visible)
@@ -264,62 +258,3 @@ def test_classic_sample_ssn_is_redacted():
 def test_all_caps_last_first_name_is_redacted():
     clean, _ = deid.scrub("PATIENT NAME: SMITH, JOHN   DOB: 04/12/1961")
     assert "SMITH" not in clean and "JOHN" not in clean
-
-
-def test_uncommon_name_after_terse_label_is_redacted():
-    clean, _ = deid.scrub("Attending: Priya Raghunathan-Okafor.")
-    assert "Raghunathan" not in clean
-
-
-# ---------------------------------------------------------------- address, frequency vs date
-
-def test_labelled_address_line_is_fully_redacted():
-    text = ("Phone: 555-201-8842    Address: 609 Stacey Roads, New Brendaton, IN 06606\n"
-            "Attending: Dr. Young    Date of service: 2026-04-02")
-    clean, phi = deid.scrub(text)
-    for part in ("609 Stacey Roads", "New Brendaton", "06606", "Young", "555-201-8842", "2026-04-02"):
-        assert part not in clean, clean
-    assert "Phone: <PHONE_NUMBER_1>" in clean
-    assert "Attending: " in clean and "<PERSON_" in clean
-    assert "609 Stacey Roads, New Brendaton, IN 06606" in phi.values()   # one LOCATION token
-
-
-def test_city_state_zip_without_label_is_redacted():
-    clean, _ = deid.scrub("Patient resides in Kingland, TX 75001 with family.")
-    assert "Kingland" not in clean and "75001" not in clean
-    assert "with family" in clean
-
-
-def test_dosing_frequency_and_duration_are_not_redacted():
-    clean, _ = deid.scrub("Medications: sertraline 50 mg daily; atorvastatin 40 mg nightly. Follow up in 2 weeks.")
-    for keep in ("daily", "nightly", "2 weeks", "sertraline 50 mg"):
-        assert keep in clean, clean
-
-
-def test_calendar_dates_are_still_redacted():
-    clean, _ = deid.scrub("DOB: 1985-03-12. Admitted 03/05/2024 and discharged March 9, 2024.")
-    for gone in ("1985-03-12", "03/05/2024", "March 9"):
-        assert gone not in clean, clean
-
-
-# ---------------------------------------------------------------- titles and labels are not names
-
-def test_bare_title_is_never_a_person_token():
-    clean, phi = deid.scrub("Attending: Dr. Hawkins    Date of service: 2026-02-02")
-    assert "Hawkins" not in clean
-    assert "Attending: Dr. <PERSON_" in clean, clean          # the title survives, the name is the token
-    assert "Dr" not in phi.values() and "Date" not in phi.values()
-    assert all(v.strip() not in ("Dr", "Dr.", "Attending", "Date") for v in phi.values())
-
-
-def test_person_span_is_trimmed_of_leading_title_and_trailing_label():
-    assert deid._trim_person("Patient: Joshua Duncan DOB: 1975", 9, 26) == (9, 22)   # "Joshua Duncan"
-    assert deid._trim_person("Seen by Dr Young today", 8, 16) == (11, 16)          # "Young"
-    assert deid._trim_person("Attending: Dr.", 11, 14) is None                    # nothing left
-    assert deid._trim_person("Plan", 0, 4) is None
-
-
-def test_ocr_style_line_keeps_labels_out_of_the_map():
-    clean, phi = deid.scrub("Patient: Joshua Duncan DOB: 1975-06-15 MAN: 8275367")
-    assert "Joshua Duncan" in phi.values(), phi
-    assert not any(v.endswith("DOB") for v in phi.values()), phi

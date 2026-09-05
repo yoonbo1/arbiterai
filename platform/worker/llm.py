@@ -11,6 +11,7 @@ SMALL_MODEL = os.environ.get("SMALL_MODEL") or "Qwen/Qwen2.5-7B-Instruct-AWQ"
 LARGE_URL = (os.environ.get("LARGE_MODEL_URL") or SMALL_URL).rstrip("/")
 LARGE_MODEL = os.environ.get("LARGE_MODEL") or SMALL_MODEL
 TIERS = {"small": (SMALL_URL, SMALL_MODEL), "large": (LARGE_URL, LARGE_MODEL)}
+
 TIMEOUT = float(os.environ.get("LLM_TIMEOUT_S", "300"))
 # Rough on-prem cost per 1k tokens (amortized GPU). Tune from your own metering.
 COST_PER_1K = {"small": 0.0002, "large": 0.0015}
@@ -27,6 +28,26 @@ JUDGE = ("You are a strict fact checker. Compare ANSWER against CONTEXT. Output 
          "fraction of claims that are. Ignore citation markers like [12] and placeholders like "
          "<PERSON_1>. No words, no explanation.")
 _NUMBER = re.compile(r"\d*\.?\d+")
+
+
+def tier_identity(tier: str) -> tuple[str, str]:
+    """The (endpoint, model) pair a tier resolves to, normalized for comparison."""
+    url, model = TIERS[tier]
+    return url.rstrip("/"), model.strip()
+
+
+def tiers_identical() -> bool:
+    """True when escalating would rerun the small tier.
+
+    The tiers come from the environment: SMALL_MODEL_URL / SMALL_MODEL serve every draft and
+    every judge call; LARGE_MODEL_URL / LARGE_MODEL serve the single escalation after a failed
+    validation, and each falls back to its small-tier counterpart when unset (never to the VLM).
+    Rule: if both tiers resolve to the same (endpoint, model), the large tier *is* the small
+    tier. At temperature 0 a rerun hands the same draft to the same judge and is metered at the
+    large-tier rate (about 8x), so worker/graph.py skips the escalation and records
+    validation["escalation_skipped"]. Point LARGE_MODEL_URL / LARGE_MODEL at a genuinely larger
+    model to re-enable it."""
+    return tier_identity("large") == tier_identity("small")
 
 
 def total_tokens(j: dict) -> int:

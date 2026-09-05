@@ -3,7 +3,95 @@
 All changes from the original two zips (`hipaa-doc-ai.zip`, `arbiterai-site.zip`), with the
 reason for each. Dates are when the change was made.
 
-## 2026-09-05 — data at rest and audit isolation
+## 2026-09-05 — platform hardening
+
+### Platform — de-identification
+
+- **Custom recognizers moved into `worker/recognizers/`** (TODO item 12, module part). One
+  module per recognizer or result filter: `mrn.py`, `phone.py`, `clinician_name.py`,
+  `address.py`, `date_filter.py`, `person_trim.py`, each with presidio-analyzer as its only
+  dependency (no `worker.*` imports, enforced by a test) and a docstring carrying the failure,
+  the scores and the examples from this changelog. `recognizers.custom_recognizers()` returns
+  them in the order `deid.py` always registered them. Behaviour was checked byte-identical
+  before anything else changed: the suite passed with the tests untouched (130 passed,
+  2 skipped, 2 xfailed) and every pattern regex, score, name, entity, context list, the date
+  regex and the title/label sets compared equal to the pre-move source. Eleven recognizer
+  tests (20 cases) moved from `tests/test_deid.py` to the new `tests/test_recognizers.py`
+  with no assertion dropped; `test_deid.py` keeps the engine, Scrubber, `_select`, `restore`
+  and `contains_phi` tests. The four upstream PRs are written up in
+  `platform/docs/UPSTREAM.md` (title, description, source module, target path in Presidio
+  2.2.364, tests, what still needs adapting) and are **not opened**.
+- **OCR-tolerant MRN labels close the 0.992 gap** (TODO item 14). The MRN recognizer is now
+  `MrnRecognizer(PatternRecognizer)`, named `mrn_regex`, with three tiers: the exact label at
+  0.85 as before; every edit-distance-1 variant of the label (one letter substituted or
+  deleted: `MAN`, `MRM`, `RN`) and every spacing variant (`M R N`) at 0.7, generated from the
+  label list (81 variants for `MRN`) and grouped by width so each lookbehind stays
+  fixed-width; and a 0.5 fallback for a bare 6-10 digit run on a line that also carries a
+  demographics cue (`DOB`, `Patient`, `Name`, `Sex`, `Age`). `MAN: 1234567`, `MRM 1234567`,
+  `M R N: 1234567` and `Patient: John Doe   1234567   DOB 01/02/1960` are now scrubbed, the
+  label kept; `03/05/2024`, `555-0100`, `75001`, `WBC 11000` and `HbA1c 9.0` on the same
+  line are not (none has six consecutive digits). Known cost: a six-digit lab value written
+  on the demographics line (`platelets 250000`) would be taken; the protect pass (item 13) is
+  the fix for that. The OCR eval was not re-run here; the survivor it reported is now caught
+  by the unit tests, so the expectation is 1.000.
+- **The output leak check now counts dates and addresses** (TODO item 11). `contains_phi`
+  ignored DATE_TIME and LOCATION entirely, so a raw date or address in an answer passed. It
+  now applies the scrub's own criteria: a DATE_TIME hit counts when calendar-like
+  (`date_filter`), a LOCATION hit when the address recognizer produced it, and the address
+  patterns are also run directly on the text because Presidio drops a pattern hit that lies
+  inside a same-typed, higher-scoring NER span. Bare state names (`Texas`), dosing frequencies
+  and durations still pass. Rationale (validation runs before re-identification, so a raw
+  date or address can only be a chunk the de-identifier missed) is in
+  `platform/docs/HIPAA_CONTROLS.md`, "Output leak check". Found by the spot-check: the check
+  also rejected every answer shaped `Attending: Dr. <PERSON_2> ...`, because the
+  title-anchored name recognizer matches the bare `Dr` after `Attending:` and the leak check
+  never applied the title trim the scrub applies (pre-existing; the pre-move code did the
+  same). PERSON hits now go through `person_trim` too, so a bare title is not a leak but
+  `Attending: Dr. Young` still is.
+- **Tests: 180 passed, 2 skipped, 2 xfailed** (from 130). `test_recognizers.py` 58 cases:
+  the 20 moved, plus package shape and isolation, per-recognizer spans and scores without the
+  NLP engine, the 14 date-filter boundary cases, and the OCR-label and demographics-line
+  cases with their negatives. `test_deid.py` 33 cases; a 13-case leak-check table replaces
+  the old "ignores dates and locations" test. Still to do outside this change:
+  `site/pages_blog.py` names `_address_recognizer()` in `worker/deid.py`; it is now
+  `worker/recognizers/address.py`.
+
+### Platform — query path
+
+- **The audit trail now says whether an answer was delivered** (TODO item 7). The audit
+  node in `worker/graph.py` wrote `job.query.completed` for every finished query, including
+  the ones validation rejected. A rejected query now writes `job.query.rejected`; only a
+  delivered answer writes `job.query.completed`. Both carry the same `detail`: `reasons`
+  (the failed checks among `phi_leak`, `cites_chunks`, `grounded`, or `no_chunks`), the
+  three check results and the faithfulness score, `attempts`, `escalated`,
+  `escalation_skipped`, `tokens_restored`, `chunks_read`, `phi_reidentified`; never answer
+  text. The job row is unchanged (`failed`, empty answer, `errors: ["validation_failed"]`,
+  as the gateway and `eval/run_eval.py` already read it). `job.ingest.completed` is
+  untouched. Because `store.audit` hard-codes `job.<kind>.completed` and `store.py` was
+  frozen for this change, the query path writes its own job row and audit row from
+  `graph.py` (`query_outcome`, `_write_query_audit`); folding an `action`/`detail` argument
+  into `store.audit` later would remove the duplicated `UPDATE jobs`.
+- **Escalation is skipped when the tiers are identical** (TODO item 9, post-mortem 3).
+  `LARGE_MODEL_URL` / `LARGE_MODEL` fall back to `SMALL_MODEL_URL` / `SMALL_MODEL` when
+  unset, which on this machine meant a failed draft was regenerated by the same model at
+  temperature 0, metered at the large-tier rate, with the same verdict. `llm.tiers_identical()`
+  compares the resolved (endpoint, model) pairs; when they are equal, `validate` records
+  `escalation_skipped: "large tier identical to small tier"` in the validation dict
+  (persisted in `jobs.result`) and the query fails at one attempt, so `queries_escalated`
+  in the eval (attempts > 1) does not count it. Escalation works as before when the tiers
+  differ; the rule and the variables are documented in `worker/llm.py`.
+- **"At most one escalation" is an explicit guard.** `MAX_ESCALATIONS = 1`, `may_escalate()`
+  is the single routing decision (`after_validate` only asks it), and `generate` raises
+  `EscalationLimitExceeded` before any model call rather than run a third generation.
+- **Tests.** `tests/test_graph_query.py` (10 new): delivered answer → `job.query.completed`;
+  failed validation with differing tiers → exactly one escalation, then `job.query.rejected`
+  with the reasons; identical tiers → no escalation, `escalation_skipped`, rejected at one
+  attempt; a PHI leak as a rejection reason that is never retried; `no_chunks` → rejected;
+  ingest still through `store.audit`; the guard in routing and in `generate`; the tier rule.
+  The graph runs end to end through `build_query()`; `langgraph` and `pytesseract` are
+  stubbed only while `worker.graph` is imported and only when the host venv lacks them (CI
+  installs both), so `test_annotate.py`'s langgraph skip is unchanged. Suite: 130 → 140
+  passed, 2 skipped, 2 xfailed.
 
 ### Platform — data at rest
 
@@ -77,6 +165,7 @@ stack (TODO items 6, 8, 10). Migrations `003`–`006` apply to an existing datab
   404 for key B.
 - **Docs.** `docs/HIPAA_CONTROLS.md` rows for audit controls, integrity and encryption at rest;
   README invariants table (audit-log row); `.env.example` says what `TENANT_KEK` now covers.
+
 
 ## 2026-09-04 — repositioning: open reference implementation
 

@@ -1,14 +1,21 @@
 """De-identification with Microsoft Presidio. Covers the 18 HIPAA Safe Harbor identifiers
 plus custom recognizers for MRNs, NANP phone numbers, title-anchored clinician/patient names,
-and US street addresses / ZIP codes (none of which Presidio's defaults catch reliably). Returns reversible tokens so the final answer can be
+and US street addresses / ZIP codes (none of which Presidio's defaults catch reliably). Each
+custom recognizer and result filter lives in its own module under worker/recognizers/, with
+presidio-analyzer as its only dependency. Returns reversible tokens so the final answer can be
 re-identified for the authorized caller.
 
 The spaCy model is configurable (SPACY_MODEL, default en_core_web_lg = Presidio's default);
 tests can run with en_core_web_sm. The analyzer is built lazily on first use."""
 import os, re, threading
 
-from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer, RecognizerResult
+from presidio_analyzer import AnalyzerEngine, RecognizerResult
 from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+from .recognizers import custom_recognizers
+from .recognizers.address import address_recognizer
+from .recognizers.date_filter import is_identifying_date as _is_identifying_date
+from .recognizers.person_trim import trim_person as _trim_person
 
 SPACY_MODEL = os.environ.get("SPACY_MODEL") or "en_core_web_lg"
 
@@ -21,106 +28,6 @@ _analyzer: AnalyzerEngine | None = None
 _lock = threading.Lock()
 
 
-def _mrn_recognizer() -> PatternRecognizer:
-    # Labeled form: only the digits are replaced, so "MRN: <MRN_1>" keeps its label.
-    # Python lookbehinds must be fixed-width, hence one alternative per label spelling.
-    labeled = r"(?<=\bMRN: )\d{6,10}\b|(?<=\bMRN:)\d{6,10}\b|(?<=\bMRN )\d{6,10}\b|(?<=\bMRN# )\d{6,10}\b|(?<=\bMRN#)\d{6,10}\b"
-    return PatternRecognizer(
-        supported_entity="MRN",
-        patterns=[Pattern("mrn_labeled", labeled, 0.85),
-                  # bare 6-10 digit run: weak alone; Presidio's context enhancer lifts it when
-                  # 'mrn' / 'medical record' appears nearby.
-                  Pattern("mrn_bare", r"\b\d{6,10}\b", 0.3)],
-        context=["mrn", "medical record", "record number", "chart number"])
-
-
-def _phone_recognizer() -> PatternRecognizer:
-    """Presidio's phonenumbers-based recognizer misses common chart formats such as
-    '+1-921-899-3518x19093' or '(555) 201-8842 ext. 12'. Regex backstop for NANP numbers with
-    optional country code and extension; overlapping hits are resolved by _select()."""
-    nanp = r"(?:\+?1[-. ])?(?:\(\d{3}\)\s?|\d{3}[-. ])\d{3}[-. ]\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d{1,6})?"
-    # A bare 10-digit run (Tel: 9218993518) is only a phone number when a phone-ish word is
-    # nearby: 0.35 alone (below the 0.5 threshold), lifted by the context enhancer when
-    # 'tel'/'phone'/'fax'... appears in the surrounding words.
-    bare = r"\b(?:1[-. ]?)?[2-9]\d{2}[2-9]\d{6}\b"
-    return PatternRecognizer(supported_entity="PHONE_NUMBER", name="phone_regex",
-                             patterns=[Pattern("nanp_with_ext", nanp, 0.6), Pattern("nanp_bare", bare, 0.35)],
-                             context=["phone", "tel", "telephone", "cell", "mobile", "fax", "call"])
-
-
-_USPS_SUFFIX = (
-    "Alley|Anex|Arcade|Avenue|Ave|Bayou|Beach|Bend|Bluff|Bluffs|Bottom|Boulevard|Blvd|Branch|Bridge|Brook|"
-    "Brooks|Burg|Burgs|Bypass|Camp|Canyon|Cape|Causeway|Center|Centers|Circle|Circles|Cliff|Cliffs|Club|"
-    "Common|Commons|Corner|Corners|Course|Court|Courts|Ct|Cove|Coves|Creek|Crescent|Crest|Crossing|Crossroad|"
-    "Crossroads|Curve|Dale|Dam|Divide|Drive|Drives|Dr|Estate|Estates|Expressway|Extension|Extensions|Fall|"
-    "Falls|Ferry|Field|Fields|Flat|Flats|Ford|Fords|Forest|Forge|Forges|Fork|Forks|Fort|Freeway|Garden|"
-    "Gardens|Gateway|Glen|Glens|Green|Greens|Grove|Groves|Harbor|Harbors|Haven|Heights|Highway|Hwy|Hill|"
-    "Hills|Hollow|Inlet|Island|Islands|Isle|Junction|Junctions|Key|Keys|Knoll|Knolls|Lake|Lakes|Land|"
-    "Landing|Lane|Ln|Light|Lights|Loaf|Lock|Locks|Lodge|Loop|Mall|Manor|Manors|Meadow|Meadows|Mews|Mill|"
-    "Mills|Mission|Motorway|Mount|Mountain|Mountains|Neck|Orchard|Oval|Overpass|Park|Parks|Parkway|Pkwy|"
-    "Parkways|Pass|Passage|Path|Pike|Pine|Pines|Place|Pl|Plain|Plains|Plaza|Point|Points|Port|Ports|"
-    "Prairie|Radial|Ramp|Ranch|Rapid|Rapids|Rest|Ridge|Ridges|River|Road|Rd|Roads|Route|Row|Rue|Run|Shoal|"
-    "Shoals|Shore|Shores|Skyway|Spring|Springs|Spur|Spurs|Square|Sq|Squares|Station|Stravenue|Stream|"
-    "Street|St|Streets|Summit|Terrace|Throughway|Trace|Track|Trafficway|Trail|Trl|Trailer|Tunnel|Turnpike|"
-    "Underpass|Union|Unions|Valley|Valleys|Viaduct|View|Views|Village|Villages|Ville|Vista|Walk|Walks|Wall|"
-    "Way|Ways|Well|Wells"
-)
-_UNIT = r"(?:,? ?(?:Suite|Ste\.?|Apt\.?|Apartment|Unit|Bldg\.?|Floor|Fl\.?|#) ?[\w-]+)?"
-
-
-def _name_recognizer() -> PatternRecognizer:
-    """spaCy NER misses 'Dr. <common-word surname>' ('Dr. Young', 'Dr. Fields') often enough to
-    fail the recall gate. Anchor on the title instead; only the name is replaced so the title
-    survives ('Attending: Dr. <PERSON_2>'). Lookbehinds are fixed-width, one per spelling."""
-    # Presidio compiles patterns with IGNORECASE; (?-i:...) makes the name part case-sensitive so
-    # it stops at the first lowercase word ("Dr. Priya Raghunathan-Okafor reviewed" -> the name only).
-    name = r"(?-i:[A-Z][a-zA-Z'\-]+(?: [A-Z][a-zA-Z'\-]+){0,2})"
-    pats = [Pattern(f"title_{i}", rf"(?<={lb}){name}", 0.7)
-            for i, lb in enumerate((r"\bDr\. ", r"\bDr ", r"\bDoctor ", r"\bMD ", r"\bAttending: ", r"\bPhysician: ",
-                                    r"\bProvider: ", r"\bPatient: ", r"\bPatient Name: ", r"\bName: "))]
-    return PatternRecognizer(supported_entity="PERSON", name="title_name_regex", patterns=pats)
-
-
-def _address_recognizer() -> PatternRecognizer:
-    """Presidio has no US street-address recognizer; spaCy tags the city at best, leaving the
-    street line and ZIP in the index. Labelled 'Address:' lines are taken whole up to the first
-    comma or newline; unlabelled street lines need a number, 1-4 words, and a USPS suffix."""
-    # Labelled: up to "street, city, ST ZIP" (three comma segments) after "Address:", stopping at
-    # a run of spaces, the next "Label:" on the same line, or end of line.
-    seg = r"(?:[^\n,]{2,60}, ){0,3}[^\n,]{2,40}?(?=\s{2,}|\s+[A-Za-z ]{2,20}:|\n|$)"
-    labelled = (rf"(?<=\bAddress: ){seg}|(?<=\bAddress:)(?=\S){seg}"
-                rf"|(?<=\bAddr: ){seg}|(?<=\bAddr:)(?=\S){seg}")
-    street = rf"\b\d{{1,6}} (?:[A-Za-z][A-Za-z'\-]+ ){{1,4}}(?:{_USPS_SUFFIX})\b\.?{_UNIT}"
-    # "City, ST 12345": spaCy misses invented or rare city names, this does not need to know them.
-    city_state_zip = r"\b[A-Za-z][A-Za-z.'\- ]{1,40}, [A-Za-z]{2} \d{5}(?:-\d{4})?\b"
-    return PatternRecognizer(supported_entity="LOCATION", name="street_address_regex",
-                             patterns=[Pattern("address_labelled", labelled, 0.85),
-                                       Pattern("street_line", street, 0.6),
-                                       Pattern("city_state_zip", city_state_zip, 0.6),
-                                       # A bare 5-digit run is a lab value at least as often as a ZIP
-                                       # (WBC 11000, a platelet count); 0.35 alone is below the 0.5 threshold
-                                       # and only the address context words above lift it.
-                                       Pattern("us_zip", r"\b\d{5}(?:-\d{4})?\b", 0.35)],
-                             context=["address", "street", "zip", "apt", "suite", "resides", "lives at"])
-
-
-# Safe Harbor removes dates tied to a person (birth, admission, discharge, death...). spaCy's
-# DATE label also covers frequencies and durations ('daily', 'nightly', 'in 2 weeks', 'tonight'),
-# which are clinical content, not identifiers; redacting them destroys dosing instructions.
-# Keep a DATE_TIME hit only if it contains something calendar-like.
-_DATE_LIKE = re.compile(
-    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\b"     # month names
-    r"|\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b"                                     # 3/5/2024, 03-05-24
-    r"|\b\d{4}-\d{2}-\d{2}\b"                                                     # ISO
-    r"|\b(?:19|20)\d{2}\b"                                                         # a year
-    r"|\b\d{1,2}(?:st|nd|rd|th)\b",                                                # 5th (of March)
-    re.IGNORECASE)
-
-
-def _is_identifying_date(span: str) -> bool:
-    return bool(_DATE_LIKE.search(span))
-
-
 def analyzer() -> AnalyzerEngine:
     global _analyzer
     if _analyzer is None:
@@ -130,10 +37,8 @@ def analyzer() -> AnalyzerEngine:
                     "nlp_engine_name": "spacy",
                     "models": [{"lang_code": "en", "model_name": SPACY_MODEL}]})
                 eng = AnalyzerEngine(nlp_engine=provider.create_engine(), supported_languages=["en"])
-                eng.registry.add_recognizer(_mrn_recognizer())
-                eng.registry.add_recognizer(_phone_recognizer())
-                eng.registry.add_recognizer(_name_recognizer())
-                eng.registry.add_recognizer(_address_recognizer())
+                for recognizer in custom_recognizers():      # MRN, phone, clinician name, address
+                    eng.registry.add_recognizer(recognizer)
                 _analyzer = eng
     return _analyzer
 
@@ -159,41 +64,6 @@ def _select(results: list[RecognizerResult]) -> list[RecognizerResult]:
     return sorted(merged, key=lambda r: r.start, reverse=True)
 
 
-# Titles and field labels are not identifiers. spaCy tags a bare "Dr" as a PERSON often enough
-# that charts came out as "Attending: <PERSON_2>. <PERSON_1>" with <PERSON_2> = "Dr", and the
-# model then answered "the attending physician is Dr." with the title as the name. A span whose
-# whole text is a title or label is dropped; a PERSON span that starts with a title or ends with
-# a label ("Dr Young", "Joshua Duncan DOB") is trimmed to the name.
-_TITLES = {"dr", "doctor", "mr", "mrs", "ms", "miss", "mx", "prof", "professor", "md", "do", "rn", "np", "pa",
-           "attending", "physician", "provider", "patient", "resident", "nurse"}
-_LABELS = {"dob", "mrn", "ssn", "date", "name", "phone", "address", "plan", "attending", "patient",
-           "physician", "provider", "diagnoses", "medications", "allergies"}
-_WORD_SPLIT = re.compile(r"[\s.,:;]+")
-
-
-def _trim_person(text: str, start: int, end: int) -> tuple[int, int] | None:
-    """Return trimmed [start, end) for a PERSON span, or None to drop it entirely."""
-    words = [w for w in _WORD_SPLIT.split(text[start:end]) if w]
-    if not words:
-        return None
-    lowered = [w.lower() for w in words]
-    if all(w in _TITLES or w in _LABELS for w in lowered):
-        return None
-    # leading titles
-    while lowered and lowered[0] in _TITLES:
-        first = words.pop(0); lowered.pop(0)
-        start = text.index(first, start) + len(first)
-        while start < end and text[start] in " .,:;":
-            start += 1
-    # trailing labels
-    while lowered and lowered[-1] in _LABELS:
-        last = words.pop(); lowered.pop()
-        end = text.rindex(last, start, end)
-        while end > start and text[end - 1] in " .,:;":
-            end -= 1
-    return (start, end) if end > start else None
-
-
 class Scrubber:
     """Replaces PHI spans with reversible tokens. One instance per document so the same value
     maps to the same token on every page (coherence for the model and the phi_map)."""
@@ -209,6 +79,7 @@ class Scrubber:
             return text
         results = analyzer().analyze(text=text, entities=ENTITIES, language="en",
                                      score_threshold=self.threshold)
+        # Safe Harbor dates are dates tied to a person; 'daily', 'in 2 weeks' are dosing content.
         results = [r for r in results
                    if r.entity_type != "DATE_TIME" or _is_identifying_date(text[r.start:r.end])]
         for r in results:                       # regex spans can start/end on whitespace
@@ -218,7 +89,7 @@ class Scrubber:
                 r.end -= 1
         kept = []
         for r in results:
-            if r.entity_type == "PERSON":
+            if r.entity_type == "PERSON":       # titles and field labels are not names
                 trimmed = _trim_person(text, r.start, r.end)
                 if trimmed is None:
                     continue
@@ -255,9 +126,34 @@ def restore(text: str, phi_map: dict[str, str]) -> str:
     return _TOKEN.sub(lambda m: phi_map.get(m.group(0), m.group(0)), text)
 
 
+_address_check = address_recognizer()       # pattern-only; needs no NLP artifacts
+
+
+def _is_leak(hit: RecognizerResult, text: str) -> bool:
+    """The scrub's own criteria: a DATE_TIME hit is an identifier only if calendar-like; a
+    LOCATION hit only if the address recognizer produced it (spaCy's bare 'Texas' is not); a
+    PERSON hit only if something is left after the title/label trim (the title-anchored name
+    recognizer matches the bare 'Dr' in 'Attending: Dr. <PERSON_2>', which is not a name)."""
+    if hit.entity_type == "DATE_TIME":
+        return _is_identifying_date(text[hit.start:hit.end])
+    if hit.entity_type == "LOCATION":
+        return (hit.recognition_metadata or {}).get(RecognizerResult.RECOGNIZER_NAME_KEY) == _address_check.name
+    if hit.entity_type == "PERSON":
+        return _trim_person(text, hit.start, hit.end) is not None
+    return True
+
+
 def contains_phi(text: str, threshold: float = 0.5) -> bool:
     """Leak check on model output. Tokens like <PERSON_1> and citations like [12] are fine;
-    raw identifiers are not."""
+    raw identifiers are not. Validation runs before re-identification, so the answer still
+    holds placeholders and a raw calendar date or street address / ZIP / 'City, ST' in it can
+    only have come from a chunk the de-identifier missed. Dosing frequencies and durations
+    ('daily', 'for 2 weeks') and bare state or country names ('Texas') are clinical content and
+    pass, exactly as they survive the scrub (docs/HIPAA_CONTROLS.md, "Output leak check")."""
     stripped = _CITATION.sub("", _TOKEN.sub("", text))
     hits = analyzer().analyze(text=stripped, entities=ENTITIES, language="en", score_threshold=threshold)
-    return any(h.entity_type not in ("DATE_TIME", "LOCATION") for h in hits)
+    if any(_is_leak(h, stripped) for h in hits):
+        return True
+    # Presidio drops a pattern hit that lies inside a same-typed, higher-scoring NER hit, so an
+    # address spaCy also tagged as LOCATION can be missing from `hits`; ask the patterns directly.
+    return any(h.score >= threshold for h in _address_check.analyze(stripped, ["LOCATION"]))
