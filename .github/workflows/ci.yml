@@ -1,0 +1,85 @@
+# CI for the Arbiter AI monorepo: the platform unit tests and the static-site build.
+# Nothing here deploys; the site goes to Heroku by hand (`make deploy-site`).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch / PR cancels the run it supersedes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    name: platform tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            platform/gateway/requirements.txt
+            platform/worker/requirements.txt
+            platform/requirements-dev.txt
+
+      # The exact pins the gateway and worker images run on, plus the host-side test deps
+      # (pytest, pytest-asyncio). The clinical NLP layer (worker/requirements-clinical.txt and the
+      # Med7 / bc5cdr model wheels, ~450 MB) is deliberately not installed: tests/test_annotate.py
+      # skips itself at collection when medspacy is missing.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r platform/gateway/requirements.txt \
+            -r platform/worker/requirements.txt \
+            -r platform/requirements-dev.txt
+
+      # tests/conftest.py pins SPACY_MODEL=en_core_web_sm (the worker's default en_core_web_lg is
+      # not needed by the unit tests). This is the wheel that `python -m spacy download
+      # en_core_web_sm` (what `make venv` runs) resolves to for spaCy 3.8; pinned by URL so the
+      # install is reproducible and lands in the pip cache.
+      - name: Install spaCy model (en_core_web_sm 3.8.0)
+        run: >
+          python -m pip install
+          https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
+      # Same rootdir/config as `make test` (`cd platform && python -m pytest -q tests`): pytest
+      # picks up platform/pytest.ini (asyncio_mode=auto) from the test path. No Postgres or Redis:
+      # conftest.py swaps them for fakes and points every URL at a closed loopback port.
+      # -rs lists the skip reasons so the clinical-model skip is visible in the log.
+      - name: Run tests
+        run: python -m pytest -q -rs platform/tests
+
+  site:
+    name: site build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # build.py and the page modules are stdlib-only; nothing to pip install.
+      - name: Build the site
+        working-directory: site
+        run: python3 build.py
+
+      - name: Check the build output
+        run: |
+          test -f site/public/index.html
+          grep -Fq 'Clinical document AI you can audit.' site/public/index.html

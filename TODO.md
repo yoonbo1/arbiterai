@@ -6,13 +6,13 @@
 |---|---|---|
 | Dyno plan | https://dashboard.heroku.com/account/billing | If you still want Eco ($5/mo, sleeps after 30 min idle), subscribe there, then tell me and I run the switch. Staying on Basic ($7/mo, never sleeps) needs nothing. |
 | Apex domain `arbiterai.tech` | https://arbiterai.tech | Done: the Squarespace forwarding activated on 2026-09-04 and the apex now 301s to `https://www.arbiterai.tech`. Nothing to do. |
-| Real test data: PhysioNet credentialing | 1. https://physionet.org/settings/credentialing/  2. https://physionet.org/about/citi-course/  3. https://physionet.org/content/mimic-iv-note/2.2/ | Complete the CITI "Data or Specimens Only Research" course (affiliate as MIT to avoid fees; upload the completion *report*), submit the credentialing form, then sign the DUA at the bottom of the MIMIC-IV-Note page. In the research description, ask whether internal evaluation of a commercial product is within "scientific research". |
-| De-id recall gold sets: n2c2 | https://portal.dbmi.hms.harvard.edu/ (register), then https://n2c2.dbmi.hms.harvard.edu/data-use-agreement | Request the 2014 and 2016 de-identification tracks under the **corporate user** DUA. |
+| **PhysioNet credentialing (now the critical path)** | 1. https://physionet.org/settings/credentialing/  2. https://physionet.org/about/citi-course/  3. https://physionet.org/content/mimic-iv-note/2.2/ | Complete the CITI "Data or Specimens Only Research" course (affiliate as MIT to avoid fees; upload the completion *report*), submit the credentialing form, then sign the DUA at the bottom of the MIMIC-IV-Note page. In the research description say: evaluating an open-source (Apache-2.0) clinical de-identification and document-QA pipeline, github.com/yoonbo1/arbiterai; results published as benchmarks. Once credentialed, also request the de-identification gold-standard corpus (see the i2b2 row). |
+| De-id recall gold sets: n2c2 (portal down) | https://portal.dbmi.hms.harvard.edu/projects/n2c2-nlp/ → "Need help? Contact us!" | Checked 2026-09-05: the portal says "The n2c2 datasets are temporarily unavailable" with no date, and there is no email address; the only channel is that form. Fill it with: name; your email; "In regards to" = **n2c2 Data**; message: *I am requesting the 2014 De-identification and Heart Disease Risk Factors corpus (and 2016 CEGS N-GRID de-identification track) under the corporate DUA to benchmark an open-source de-identification pipeline (github.com/yoonbo1/arbiterai). The portal shows the datasets as temporarily unavailable. Could you tell me when access requests will reopen, and whether I can submit the DUA now so it is queued?* Then check the page weekly. |
 | Governing law in the terms | https://www.arbiterai.tech/terms.html | Ask counsel for the jurisdiction and venue; send me the wording. |
-| Make the repo public and license it | https://github.com/yoonbo1/arbiterai/settings | Pick MIT or Apache-2.0 (tell me which; I add `LICENSE` and the badge). Then Danger Zone → Change visibility → Public. History was scanned for secrets before the first push; I will rescan before you flip it. Optionally rename to `arbiter-ai` on the same page. Once public I add the GitHub links the brief asks for. |
+| Make the repo public and license it | https://github.com/yoonbo1/arbiterai | Done 2026-09-05: repo public; `LICENSE` is Apache-2.0 (say if you prefer MIT and I swap it); CI badge and GitHub links on the site added the same day. |
 | LinkedIn | send me the URL | The about page and author strip link to email and GitHub only until I have it. |
 | Search Console | https://search.google.com/search-console | Add property `www.arbiterai.tech` (DNS or HTML-tag verification; I can add the tag), then submit `https://www.arbiterai.tech/sitemap.xml`. |
-| i2b2 2014 de-identification run | https://portal.dbmi.hms.harvard.edu/ | The single most important number on the site. Request the 2014 corpus under the corporate DUA; once you have the files, tell me and I run the harness and add the row. |
+| i2b2 2014 de-identification run | blocked on the n2c2 row above | Same corpus, same portal. While it is down, the fallback with real identifiers is the PhysioNet de-identification gold-standard corpus (2,434 nursing notes, PHI annotated), which needs the same PhysioNet credentialing as MIMIC, so the PhysioNet row is now the critical path: https://physionet.org/content/deid/1.1/ ("apply for access to the gold standard corpus" after credentialing). |
 
 Everything below this table is engineering and gets done without you.
 
@@ -26,9 +26,9 @@ and scale, then dev-box hygiene. Production safeguards are last because the site
 correctly, that whoever runs this against real records does so under their own program.
 
 ### 1. Make it public and seen (this week; mostly you, one click each; see the table above)
-1. Choose the licence and flip the repo public. Everything "open" is blocked on this. I then add `LICENSE`, the README badges, the GitHub links the brief asks for, and a CI workflow running `make test` so the badge means something.
-2. Request the i2b2/n2c2 2014 de-identification corpus. The one number the site is missing; I run the harness the day the files arrive.
-3. Distribution per the brief: I draft the 150-word LinkedIn version of each of the four post-mortems and the HN submissions; you post. LinkedIn headline and About take the one-liner.
+1. ~~Choose the licence and flip the repo public.~~ Done 2026-09-05 (public, Apache-2.0, CI, GitHub links on the site).
+2. Request the i2b2/n2c2 2014 de-identification corpus. **Blocked 2026-09-05: the n2c2 portal says the datasets are temporarily unavailable.** Send the contact-form message in the table above, and start PhysioNet credentialing now because it also unlocks the PhysioNet de-identification gold-standard corpus, the fallback with real identifiers.
+3. Distribution per the brief: drafts are in `site/DISTRIBUTION.md` (LinkedIn headline and About, four posts under 150 words, five HN submissions with the first comment and the Show HN text). You post.
 4. Search Console: add the property, submit the sitemap. Five minutes.
 5. Send the LinkedIn URL for the about page and author strip.
 
@@ -57,7 +57,7 @@ correctly, that whoever runs this against real records does so under their own p
 23. Synthea multi-document generator (about 20 document types per patient) at 60,000 patients on an external SSD; then `halfvec` and the per-tenant index partition load test.
 
 ### 5. Dev-box hygiene (me; whenever)
-24. Ollama as a managed service; cache OCR so `choose_route` does not run Tesseract twice; asyncpg pool validation after a Postgres restart; retry with backoff for transient model errors; split `env_file` secrets per service; widen `api_keys.key_prefix`; verify the `gpu` profile, `vlm` route and Postgres checkpointer on a GPU box.
+24. Ollama as a managed service; cache OCR so `choose_route` does not run Tesseract twice; asyncpg pool validation after a Postgres restart; retry with backoff for transient model errors; split `env_file` secrets per service; widen `api_keys.key_prefix`; `make venv` never installs presidio, spaCy or psycopg (they were pre-installed on this machine; CI installs the gateway, worker and dev requirements instead, so mirror that in the Makefile); verify the `gpu` profile, `vlm` route and Postgres checkpointer on a GPU box.
 25. Dyno plan (Eco vs Basic) and governing law in the terms: whenever you feel like it; nothing depends on them.
 
 ### 6. Deferred: production-PHI safeguards

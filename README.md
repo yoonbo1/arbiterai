@@ -1,5 +1,7 @@
 # Arbiter AI
 
+[![CI](https://github.com/yoonbo1/arbiterai/actions/workflows/ci.yml/badge.svg)](https://github.com/yoonbo1/arbiterai/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Arbiter AI is an open reference implementation of HIPAA-safe document AI: de-identification
 before any model call, cited and verified answers, database-enforced patient isolation, and
 an append-only audit trail — with the evaluation harness that proves each of those
@@ -55,7 +57,7 @@ make synth N=20                          # synthetic records with injected fake 
 make bootstrap                           # dev tenant + API key -> platform/.env.dev-tenant
 make eval LIMIT=20                       # ingest, de-id recall, 40 gold questions, leaks, latency, cost
 make eval-extraction LIMIT=20            # clinical-fact extraction against gold
-make test                                # 130 tests
+make test                                # 130 tests with the clinical extras; CI runs 75 without them
 ```
 
 ## Evaluation results
@@ -84,7 +86,8 @@ services connecting as the Postgres superuser, which silently bypasses RLS.
 
 Not a product, not a hosted service, no BAA, no SOC 2 or HITRUST claim, no real PHI, ever.
 `TODO.md` lists everything that would have to be true before real records could be
-processed anywhere.
+processed anywhere. Licensed under Apache-2.0; the licence grants no warranty and no
+compliance claim.
 
 ## Layout
 
@@ -113,4 +116,4 @@ processed anywhere.
 
 ## Author
 
-Yoonbo Cho · hello@arbiterai.tech · github.com/yoonbo1
+Yoonbo Cho · hello@arbiterai.tech · github.com/yoonbo1 · https://github.com/yoonbo1/arbiterai
