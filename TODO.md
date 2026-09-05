@@ -34,9 +34,9 @@ correctly, that whoever runs this against real records does so under their own p
 
 ### 2. Credibility fixes a code reviewer would catch (me; days)
 6. `audit_log` is not under RLS: `app_rw` can read every tenant's rows. The security page admits it; fix it and update the page.
-7. `job.query.completed` is written for validation-failed queries too. Record the outcome so the audit trail distinguishes a rejected answer from a delivered one.
+7. ~~`job.query.completed` is written for validation-failed queries too. Record the outcome so the audit trail distinguishes a rejected answer from a delivered one.~~ Done 2026-09-05: a rejected query writes `job.query.rejected` with the reasons in `detail`; only a delivered answer writes `job.query.completed` (`tests/test_graph_query.py`).
 8. `jobs.request` stores the raw question and patient id before de-identification. This is the one gap that contradicts invariant 1 in spirit; de-identify or encrypt before persisting.
-9. Escalation to the same model at temperature 0 (post-mortem 3 says it is open): skip when the tiers are identical, and make the large tier configurable to a real larger model.
+9. ~~Escalation to the same model at temperature 0 (post-mortem 3 says it is open): skip when the tiers are identical, and make the large tier configurable to a real larger model.~~ Done 2026-09-05: `llm.tiers_identical()` skips the escalation and records `escalation_skipped` when `LARGE_MODEL_URL`/`LARGE_MODEL` resolve to the small tier; point them at a larger model to re-enable it.
 10. Plaintext `patients.external_id`, `content_hash = md5(storage_uri)`, and the `storage_uri` left behind by a failed ingest. Three small fixes, each a thing a reader of `init.sql` will notice.
 11. `contains_phi` ignores dates and locations in the output check. Decide (Safe Harbor says they are identifiers) and document the decision on the security page either way.
 12. Move the custom Presidio recognizers into a delimited module and open the four upstream PRs the brief lists (labelled MRN, NANP with extension, title-anchored names, dosing-frequency date filter). Each PR is a portfolio item and links from its post.
@@ -140,8 +140,8 @@ with a compliance officer.
 ## Found by the eval harness (synthetic data, 20 documents)
 
 - [ ] `audit_log` is not under RLS: `app_rw` can read every tenant's rows. Add a policy or a tenant-scoped view.
-- [ ] `job.query.completed` is written for validation-failed queries too, so the audit trail cannot distinguish a rejected answer from a delivered one. Record the outcome in `action` or `detail`.
-- [ ] Escalation re-runs the same model at temperature 0 when `LARGE_MODEL` equals `SMALL_MODEL`, which cannot change the verdict and costs 8x. Either configure a genuinely larger model for the large tier or skip escalation when the tiers are identical.
+- [x] `job.query.completed` is written for validation-failed queries too, so the audit trail cannot distinguish a rejected answer from a delivered one. Record the outcome in `action` or `detail`. (Done 2026-09-05: `job.query.rejected` with `detail.reasons`; `job.query.completed` only for delivered answers.)
+- [x] Escalation re-runs the same model at temperature 0 when `LARGE_MODEL` equals `SMALL_MODEL`, which cannot change the verdict and costs 8x. Either configure a genuinely larger model for the large tier or skip escalation when the tiers are identical. (Done 2026-09-05: skipped when the tiers resolve to the same endpoint and model, recorded as `escalation_skipped`, not counted as an escalation.)
 - [ ] The grounding judge is a 7B model asked for a single number; it is sensitive to formatting. Consider claim-level checking or a calibrated threshold, and measure judge agreement on a labelled set.
 - [ ] Tesseract misreads on scanned pages propagate into answers (`fisinopril` for `lisinopril`, `HbAtc` for `HbA1c`). Route low-confidence pages to the VLM on a GPU box, or add a drug-name dictionary correction step.
 - [ ] Ages over 89 and other Safe Harbor identifiers not present in the synthetic corpus (device serials, biometric identifiers, full-face photos, vehicle identifiers, account numbers) are not exercised. Extend the synthetic generator before trusting recall.
