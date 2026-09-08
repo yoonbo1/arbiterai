@@ -40,12 +40,54 @@ def record(i, synth=None):
         "mrn": f"{random.randint(1000000, 9999999)}", "phone": fake.phone_number(),
         "address": fake.address().replace("\n", ", "), "physician": f"Dr. {fake.last_name()}",
         "visit_date": fake.date_this_year().isoformat(),
-        "dx": random.sample(DX, 2), "meds": random.sample(MEDS, 3),
+        "dx": (dx := random.sample(DX, 2)), "meds": random.sample(MEDS, 3),
         "a1c": round(random.uniform(5.4, 9.8), 1), "bp": f"{random.randint(110,165)}/{random.randint(65,98)}",
         "ldl": random.randint(70, 190),
-        "negated": random.sample(NEGATED, 2), "family": random.choice(FAMILY),
+        # A finding may not be both denied and diagnosed, and family history may not duplicate a
+        # present problem: "No evidence of pneumonia" under a diagnosis of community-acquired
+        # pneumonia is a contradiction, and it made 9.4% of records unanswerable by construction.
+        "negated": random.sample([n for n in NEGATED if not any(n in d for d in dx)], 2),
+        "family": random.choice([f for f in FAMILY if f not in dx]),
         "allergy": random.choice(ALLERGIES),
     }
+
+
+# Questions the record can be graded on. `kind` tells the scorer how to judge the answer:
+#   extract  a value or list that appears in the note; substring match
+#   deny     a finding the note explicitly rules out; the answer must say so, not assert it
+#   family   documented in the family, not in the patient; the answer must not claim the patient has it
+#   absent   never written in the note at all; declining is the correct answer, inventing one is not
+# The last two kinds did not exist before 2026-09-08. Two questions per record could not detect
+# an assertion error or a fabrication, and could not resolve anything under about 15 points.
+UNDOCUMENTED = [("ejection fraction", "What is the patient's ejection fraction?"),
+                ("serum creatinine", "What is the patient's serum creatinine?"),
+                ("smoking status", "Does the patient smoke?"),
+                ("hemoglobin", "What is the patient's hemoglobin?"),
+                ("weight", "What is the patient's weight?")]
+
+
+def gold_questions(rec):
+    al, _ = rec["allergy"]
+    qs = [{"q": "What is the patient's most recent HbA1c?", "a": f"{rec['a1c']}%", "kind": "extract"},
+          {"q": "What is the patient's LDL?", "a": f"{rec['ldl']}", "kind": "extract"},
+          {"q": "What is the patient's blood pressure?", "a": rec["bp"], "kind": "extract"},
+          {"q": "List the discharge medications.", "a": "; ".join(rec["meds"]), "kind": "extract"},
+          {"q": "What conditions is the patient being treated for?", "a": "; ".join(rec["dx"]), "kind": "extract"},
+          {"q": "Who is the attending physician?", "a": rec["physician"], "kind": "extract"}]
+    for m in rec["meds"]:                                  # dose and frequency, one question each
+        name, dose, freq = MED_PARTS[m]
+        if dose:
+            qs.append({"q": f"What dose of {name} is the patient taking?", "a": dose, "kind": "extract"})
+        qs.append({"q": f"How often does the patient take {name}?", "a": freq, "kind": "extract"})
+    for n in rec["negated"]:                               # explicitly ruled out in the note
+        qs.append({"q": f"Does the patient have {n}?", "a": n, "kind": "deny"})
+    qs.append({"q": f"Does the patient have {rec['family']}?", "a": rec["family"], "kind": "family"})
+    qs.append({"q": "What are the patient's allergies?",
+               "a": "no known drug allergies" if al == "NKDA" else al,
+               "kind": "extract" if al != "NKDA" else "deny"})
+    for _, q in random.sample(UNDOCUMENTED, 2):            # not in the note; a refusal is correct
+        qs.append({"q": q, "a": "", "kind": "absent"})
+    return qs
 
 
 def write_pdf(rec, path):
@@ -107,8 +149,7 @@ def main():
             scan_it(clean, out / "scan" / clean.name, a.scan_mode)
         al, reaction = rec["allergy"]
         manifest.append({**rec, "injected_phi": [rec["name"], rec["dob"], rec["mrn"], rec["phone"], rec["address"], rec["physician"]],
-                         "gold_qa": [{"q": "What is the patient's most recent HbA1c?", "a": f"{rec['a1c']}%"},
-                                     {"q": "List the discharge medications.", "a": "; ".join(rec["meds"])}],
+                         "gold_qa": gold_questions(rec),
                          # Gold for the extraction eval (clinical_facts). Assertions matter: the two
                          # negated findings and the family-history condition must not appear as present.
                          "gold_facts": {

@@ -3,6 +3,38 @@
 All changes from the original two zips (`hipaa-doc-ai.zip`, `arbiterai-site.zip`), with the
 reason for each. Dates are when the change was made.
 
+## 2026-09-08 — the evaluation could not measure anything
+
+### Evaluation
+
+- **The harness had 40 gold questions and could not resolve a difference below about 15
+  points.** The standard power calculation puts detecting a 3-point difference at roughly 969
+  questions and a 5-point difference at 349. Every accuracy number published so far, including
+  0.575 to 0.975, was only meaningful because the effect was enormous; nothing subtler was
+  measurable. `gold_questions()` in `scripts/make_synthetic_docs.py` now emits about 17
+  questions per record, 346 across 20 records, which brings the minimum detectable difference
+  to 5.0 points at the same corpus size.
+- **The generator was writing self-contradictory records.** A finding could be both denied and
+  diagnosed, because `NEGATED` contains "pneumonia" while `DX` contains "community-acquired
+  pneumonia", and the family-history condition could duplicate a present diagnosis since both
+  lists contain "type 2 diabetes mellitus". Measured over 2,000 draws: 9.4% and 6.2% of records
+  respectively. Those records were unanswerable by construction. `record()` now excludes the
+  collisions. The defect was invisible for as long as it was, because the two questions the
+  harness asked never touched problems, negation or family history.
+- **Three new question kinds, and none of them can be graded by substring match.**
+  `deny` (a finding the note rules out), `family` (documented in the family, not the patient),
+  and `absent` (never written in the note at all). Grading them the old way would have inflated
+  accuracy: for a denial the gold string is the condition itself, so "the patient has pneumonia"
+  scores correct; for an `absent` question the gold string is empty and `"" in answer` is always
+  true, so a fabricated value scores correct. `grade()` in `eval/run_eval.py` judges by kind,
+  and `accuracy_by_kind` is reported alongside the total.
+- **A refusal is no longer counted as a failure when refusing is right.** `absent` questions
+  have no answer in the record, so validation returning nothing is the correct outcome. The old
+  code counted it in `queries_failed_validation`, which would have penalised the system for
+  being honest.
+- **`tests/test_eval_grading.py`** covers the grader, including two regression tests that pin
+  the substring-match failures above. Suite: 253 passed, 2 skipped, 2 xfailed.
+
 ## 2026-09-05 — platform hardening
 
 ### Platform — de-identification

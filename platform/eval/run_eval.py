@@ -8,7 +8,7 @@ Usage (from platform/, gateway on localhost:8080, postgres published on 127.0.0.
   python eval/run_eval.py --manifest data/synthetic/manifest.json [--limit N]
 DATABASE_URL must be the app_rw role: the de-id/leak check reads chunks under RLS with
 app.tenant_id set, which only means something for a role that RLS applies to."""
-import argparse, json, math, os, statistics, time
+import argparse, collections, json, math, os, statistics, time
 from pathlib import Path
 
 import httpx
@@ -34,6 +34,49 @@ def p95(xs):
     if not xs:
         return None
     return sorted(xs)[max(0, math.ceil(0.95 * len(xs)) - 1)]
+
+
+
+# ---- grading by question kind ------------------------------------------------------------
+# `extract` is the original substring check. The other three kinds cannot be graded that way:
+# for a denial the gold string is the condition itself, so a substring match scores "the patient
+# has pneumonia" as correct. Grading them wrong would inflate accuracy, which is the failure the
+# de-id recall metric already made once.
+NEG_CUES = ("no evidence", "no known", "denies", "denied", "ruled out", "negative for",
+            "does not have", "did not have", "absence of", "not present", "no ")
+FAM_CUES = ("family history", "family member", "relative", "mother", "father", "parent", "sibling")
+ABS_CUES = ("not documented", "not mentioned", "no information", "not available", "not provided",
+            "not stated", "no mention", "not in the record", "does not contain", "cannot determine",
+            "unable to", "not specified", "no data")
+
+
+def _has(text, cues):
+    return any(c in text for c in cues)
+
+
+def grade(kind, gold, ans, declined):
+    """Returns (correct, lenient). `declined` is True when validation returned no answer."""
+    a = ans.lower()
+    if kind == "absent":
+        # The note never contains this. Refusing is right; so is saying it is undocumented.
+        # Producing a value is a fabrication, however well formed.
+        ok = declined or _has(a, ABS_CUES)
+        return ok, ok
+    if declined:
+        return False, False
+    if kind == "deny":
+        # Must say the finding is absent, and must not assert it as a present problem.
+        ok = _has(a, NEG_CUES) and not any(
+            p in a for p in (f"has {gold}", f"with {gold}", f"diagnosed with {gold}", f"treated for {gold}"))
+        return ok, ok
+    if kind == "family":
+        # Documented in the family, not the patient. Attributing it to the patient is the error.
+        ok = _has(a, FAM_CUES) and not any(
+            p in a for p in (f"patient has {gold}", f"diagnosed with {gold}", f"history of {gold} in the patient"))
+        return ok, ok
+    items = [g.strip() for g in gold.split(";")]
+    return (items[0].lower() in a,
+            all(" ".join(g.split()[:2]).lower() in a for g in items))
 
 
 def main():
@@ -62,6 +105,7 @@ def main():
     leaked_parts = sorted({part for _, part in parts if part in text})
     # 3) gold questions
     lat, correct, lenient, leaks, failed, esc = [], 0, 0, 0, 0, 0
+    by_kind = collections.defaultdict(lambda: [0, 0])       # kind -> [correct, asked]
     query_jobs = []
     for r in recs:
         for qa in r["gold_qa"]:
@@ -69,14 +113,16 @@ def main():
             query_jobs.append(jid)
             res, dt = wait(jid); lat.append(dt)
             ans = (res.get("result") or {}).get("answer") or ""
-            failed += res.get("status") != "done"           # validation rejected every attempt
+            declined = res.get("status") != "done"          # validation returned no answer
+            # A refusal is the correct outcome for an `absent` question, so it is not a failure.
+            failed += declined and qa.get("kind") != "absent"
             # jobs.result_enc is ciphertext in the database; the gateway decrypts it for the owning
             # key, so escalations are counted from the API response, not from the table.
             esc += int(((res.get("result") or {}).get("validation") or {}).get("attempts") or 0) > 1
-            gold = [g.strip() for g in qa["a"].split(";")]
-            correct += gold[0].lower() in ans.lower()         # strict: first gold item verbatim
-            # lenient: every gold item's first two tokens (drug + dose, or the lab value) appear
-            lenient += all(" ".join(g.split()[:2]).lower() in ans.lower() for g in gold)
+            c, l = grade(qa.get("kind", "extract"), qa["a"], ans, declined)
+            correct += c; lenient += l
+            by_kind[qa.get("kind", "extract")][0] += c
+            by_kind[qa.get("kind", "extract")][1] += 1
             leaks += any(p in ans for o in recs if o is not r for p in o["injected_phi"])  # cross-patient leak
     n = sum(len(r["gold_qa"]) for r in recs)
     # 4) per-job accounting for this run (jobs is under RLS; app.tenant_id is still set). Only the
@@ -92,6 +138,8 @@ def main():
         "deid_recall_strict": 1 - len(leaked_parts) / max(1, len({part for _, part in parts})),
         "phi_component_survivors": leaked_parts[:8],
         "answer_accuracy": correct / n, "answer_accuracy_lenient": lenient / n,
+        "accuracy_by_kind": {k: round(c / a, 3) for k, (c, a) in sorted(by_kind.items())},
+        "questions_by_kind": {k: a for k, (c, a) in sorted(by_kind.items())},
         "queries_failed_validation": failed, "queries_escalated": esc,
         "cross_patient_leaks": leaks,
         "p50_s": statistics.median(lat) if lat else None, "p95_s": p95(lat),
