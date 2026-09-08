@@ -5,6 +5,36 @@ reason for each. Dates are when the change was made.
 
 ## 2026-09-08 — the evaluation could not measure anything
 
+### Finding — the validation gate cannot verify a negation
+
+Expanding the question set immediately surfaced a second judge failure, in the same family as
+the citation-placement bug but with worse consequences. Questions whose correct answer is a
+negation are rejected almost every time: family-history accuracy was **0.10 across 20
+questions**, and every failure was a validation rejection with `grounded: false` and
+faithfulness exactly 0.0, not a wrong answer from the model.
+
+Isolated against a fixed source text, three runs per case at temperature 0, fully deterministic:
+
+| Answer | Truth | Score |
+|---|---|---|
+| "Stroke appears in the family history for this patient." | correct | 1.00 |
+| "The record documents a family history of stroke." | correct | 1.00 |
+| "No, the patient does not have stroke. Stroke is documented as family history." | correct | **0.00** |
+| "The patient does not have stroke." | correct | **0.00** |
+| "Yes, the patient has stroke." | wrong | 0.00 |
+| "The patient was diagnosed with stroke during this admission." | wrong | 0.00 |
+| "The patient has a family history of breast cancer." | wrong | 0.00 |
+
+The gate blocks every wrong answer and half the correct ones, and scores a correct negation
+identically to a fabrication. It discriminates on grammatical polarity, not on truth: a positive
+claim can be matched against the source, a negative claim cannot, because the absence of a fact
+is not written in the text. `deny` questions score 0.952 by contrast, because the note states
+those negations explicitly ("No evidence of pneumonia"), so the judge can find them.
+
+From outside the system the two outcomes are indistinguishable, and the aggregate still read
+0.90 while this was happening. Tracked as TODO item 16; the published fix for this class is to
+restructure the judging task rather than change the model.
+
 ### Evaluation
 
 - **The harness had 40 gold questions and could not resolve a difference below about 15
