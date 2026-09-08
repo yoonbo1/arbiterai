@@ -165,3 +165,39 @@ work above wants one.
    product feature, and the thing that makes the benchmark defensible later.
 4. Take the cheap wins in parallel: the judge attack and the leaderboard audit are each
    under a day and either could produce a result before the FDA deadline.
+
+---
+
+## 6. Two numbers that indict the current harness, and both are free to fix
+
+**The evaluation has 40 gold questions. That is far too few to detect anything.**
+
+The standard power calculation says detecting a three point difference at 80% confidence
+needs about 969 questions. At 40, the smallest difference the harness can distinguish from
+noise is roughly 15 points. Every accuracy comparison reported to date, including the move
+from 0.575 to 0.975, is only meaningful because the effect was enormous. Nothing subtler
+than that is currently measurable.
+
+| To detect | Gold questions needed |
+|---|---|
+| 3 points | 969 |
+| 5 points | 349 |
+| 10 points | 87 |
+| 15 points | 39 |
+
+Generating more gold questions costs nothing. The corpus generator already emits them.
+
+**The field-wide gap is now quantified, and it is the opening.**
+
+A review of 445 published benchmarks found that **16% used any uncertainty estimate or
+statistical test**. A separate review of 56 medical benchmarks found **88% do not address
+contamination, 89% have no robustness test, and 91% never evaluate uncertainty handling**.
+
+That is the whole argument for this direction in two sentences. The bar is not high, it is
+absent, and clearing it requires care rather than compute.
+
+**One more finding that changes how any future benchmark must be reported.** Harness
+configuration alone moved one model between 31% and 89% on standard benchmarks, and four of
+twelve models reached first place under some configuration. Raising an agent's token budget
+tenfold lifts measured performance by about 25%. A published number without its harness and
+budget is not a claim about a model.
