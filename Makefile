@@ -38,9 +38,9 @@ site:
 serve-site: site venv
 	cd $(SITE) && $(VENV)/bin/gunicorn wsgi:app --bind 127.0.0.1:8765 --workers 2 --threads 4
 
-# The site deploys itself: GitHub Pages builds site/ on push (.github/workflows/pages.yml).
+# Deploy site/ to Heroku. The app must already exist and have a git remote (see README).
 deploy-site: site
-	@echo "The site deploys to GitHub Pages on every push to main that touches site/ (.github/workflows/pages.yml)."
+	git subtree push --prefix site heroku main
 
 # ---------------------------------------------------------------- python env
 venv: $(VENV)/bin/python

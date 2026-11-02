@@ -1,5 +1,5 @@
 # CI for the Arbiter AI monorepo: the platform unit tests and the static-site build.
-# Nothing here deploys; the site goes to GitHub Pages from pages.yml.
+# Nothing here deploys; the site goes to Heroku by hand (`make deploy-site`).
 name: CI
 
 on:

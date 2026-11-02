@@ -112,8 +112,7 @@ compliance claim.
 | `build.py` | Wraps each page body in the shared shell (header, nav, footer, meta, JSON-LD) and writes `public/`, `sitemap.xml`, `robots.txt`, `feed.xml`. |
 | `pages.py`, `pages_home.py`, `pages_product.py`, `pages_blog.py` | Page bodies as HTML strings: home, how it works, security model, docs, about, contact, privacy, terms, 404, and the blog (post-mortems and the acronyms guide). |
 | `assets/` | `styles.css` (ink / frost / brass palette), `main.js` (nav toggle, trace animation), `logo.svg`, `favicon.svg`, `og-image.png`, `medical-record-acronyms.pdf`. |
-| `../.github/workflows/pages.yml` | Deployment: GitHub Pages builds `public/` on every push to `main` that touches `site/`, and writes redirect pages for the retired paths. |
-| `wsgi.py`, `Procfile`, `bin/post_compile` | The former Heroku deployment (gunicorn + WhiteNoise, security headers, canonical-host and legacy-path redirects). Kept for `make serve-site`. |
+| `wsgi.py`, `Procfile`, `bin/post_compile` | Heroku deployment: gunicorn + WhiteNoise, security headers (CSP, HSTS, frame-ancestors none), canonical-host and legacy-path redirects, and the build hook that generates `public/`. |
 
 `site/public/` is generated and is not committed. Run `make site` (or `python3 site/build.py` from `site/`).
 
